@@ -7,6 +7,8 @@ from typing import Any
 
 from homeassistant.components.climate import (
     ATTR_HVAC_MODE,
+    ATTR_TARGET_TEMP_HIGH,
+    ATTR_TARGET_TEMP_LOW,
     ClimateEntity,
     ClimateEntityFeature,
     HVACAction,
@@ -30,7 +32,7 @@ HVAC_TO_API = {
     HVACMode.OFF: "off",
     HVACMode.HEAT: "heat",
     HVACMode.COOL: "cool",
-    HVACMode.AUTO: "auto",
+    HVACMode.HEAT_COOL: "auto",
     HVACMode.DRY: "dry",
     HVACMode.FAN_ONLY: "vent",
 }
@@ -39,9 +41,9 @@ API_TO_HVAC = {
     "off": HVACMode.OFF,
     "heat": HVACMode.HEAT,
     "cool": HVACMode.COOL,
-    "auto": HVACMode.AUTO,
-    "autoHeat": HVACMode.AUTO,
-    "autoCool": HVACMode.AUTO,
+    "auto": HVACMode.HEAT_COOL,
+    "autoHeat": HVACMode.HEAT_COOL,
+    "autoCool": HVACMode.HEAT_COOL,
     "dry": HVACMode.DRY,
     "vent": HVACMode.FAN_ONLY,
 }
@@ -85,7 +87,7 @@ class MitsubishiComfortClimateEntity(CoordinatorEntity[MitsubishiComfortCoordina
         HVACMode.OFF,
         HVACMode.HEAT,
         HVACMode.COOL,
-        HVACMode.AUTO,
+        HVACMode.HEAT_COOL,
         HVACMode.DRY,
         HVACMode.FAN_ONLY,
     ]
@@ -148,27 +150,19 @@ class MitsubishiComfortClimateEntity(CoordinatorEntity[MitsubishiComfortCoordina
     @property
     def target_temperature(self) -> float | None:
         device = self.device
-        if self.hvac_mode == HVACMode.AUTO:
+        if self.hvac_mode == HVACMode.HEAT_COOL:
             return None
         return device.target_temperature() if device else None
 
     @property
     def target_temperature_low(self) -> float | None:
         device = self.device
-        if not device:
-            return None
-        if self.hvac_mode == HVACMode.AUTO:
-            return device.sp_heat
-        return None
+        return device.sp_heat if device else None
 
     @property
     def target_temperature_high(self) -> float | None:
         device = self.device
-        if not device:
-            return None
-        if self.hvac_mode == HVACMode.AUTO:
-            return device.sp_cool
-        return None
+        return device.sp_cool if device else None
 
     @property
     def hvac_mode(self) -> HVACMode | None:
@@ -177,7 +171,7 @@ class MitsubishiComfortClimateEntity(CoordinatorEntity[MitsubishiComfortCoordina
             return None
         if not device.power:
             return HVACMode.OFF
-        return API_TO_HVAC.get(device.operation_mode, HVACMode.AUTO)
+        return API_TO_HVAC.get(device.operation_mode, None)
 
     @property
     def fan_mode(self) -> str | None:
@@ -188,10 +182,14 @@ class MitsubishiComfortClimateEntity(CoordinatorEntity[MitsubishiComfortCoordina
 
     @property
     def supported_features(self) -> int:
-        base = ClimateEntityFeature.FAN_MODE | ClimateEntityFeature.SWING_MODE
-        if self.hvac_mode == HVACMode.AUTO:
-            return base | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
-        return base | ClimateEntityFeature.TARGET_TEMPERATURE
+        return (
+            ClimateEntityFeature.FAN_MODE
+            | ClimateEntityFeature.SWING_MODE
+            | ClimateEntityFeature.TARGET_TEMPERATURE
+            | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
+            | ClimateEntityFeature.TURN_ON
+            | ClimateEntityFeature.TURN_OFF
+        )
 
     @property
     def swing_mode(self) -> str | None:
@@ -234,16 +232,16 @@ class MitsubishiComfortClimateEntity(CoordinatorEntity[MitsubishiComfortCoordina
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set target temperature (Celsius) and optionally HVAC mode."""
         temperature = kwargs.get(ATTR_TEMPERATURE)
-        temp_low = kwargs.get("target_temp_low")
-        temp_high = kwargs.get("target_temp_high")
+        temp_low = kwargs.get(ATTR_TARGET_TEMP_LOW)
+        temp_high = kwargs.get(ATTR_TARGET_TEMP_HIGH)
         hvac_mode = kwargs.get(ATTR_HVAC_MODE)
         if temperature is None and temp_low is None and temp_high is None:
             return
 
         device = self.device
-        # If explicit range temps are provided, default to auto mode
-        if hvac_mode is None and (temp_low is not None or temp_high is not None):
-            hvac_mode = HVACMode.AUTO
+        if hvac_mode is None:
+            # use existing mode
+            hvac_mode = self.hvac_mode
 
         api_mode = HVAC_TO_API.get(hvac_mode or (device.operation_mode if device else None))
         commands: dict[str, Any] = {"power": 1}
@@ -254,24 +252,19 @@ class MitsubishiComfortClimateEntity(CoordinatorEntity[MitsubishiComfortCoordina
         elif api_mode == "heat":
             commands["spHeat"] = temperature
             commands["operationMode"] = "heat"
-        elif api_mode == "auto":
+        elif api_mode == "auto" or api_mode == "autoHeat" or api_mode == "autoCool":
             if temp_high is not None:
                 commands["spCool"] = temp_high
-            elif temperature is not None:
-                commands["spCool"] = temperature
             if temp_low is not None:
                 commands["spHeat"] = temp_low
-            elif temperature is not None:
-                commands["spHeat"] = temperature
             commands["operationMode"] = "auto"
         elif api_mode == "dry":
             commands["operationMode"] = "dry"
         elif api_mode == "vent":
             commands["operationMode"] = "vent"
         else:
-            if temperature is not None:
-                commands["spCool"] = temperature
-                commands["spHeat"] = temperature
+            _LOGGER.warning("Unsupported HVAC mode: %s", hvac_mode)
+            return
 
         await self._client.async_send_command(self._serial, commands)
 
@@ -307,6 +300,45 @@ class MitsubishiComfortClimateEntity(CoordinatorEntity[MitsubishiComfortCoordina
             {"operationMode", "power"},
             duration=10.0,
         )
+
+    async def async_turn_on(self) -> None:
+        device = self.device
+        commands = {"power": 1}
+        hvac_mode = None
+        if device and device.operation_mode:
+            hvac_mode = API_TO_HVAC.get(device.operation_mode)
+        if hvac_mode is None or hvac_mode == HVACMode.OFF:
+            hvac_mode = HVACMode.HEAT
+        commands["operationMode"] = HVAC_TO_API[hvac_mode]
+        await self._client.async_send_command(self._serial, commands)
+        if device:
+            device.power = True
+            device.operation_mode = commands["operationMode"]
+            self.coordinator.async_set_updated_data(dict(self.coordinator.data))
+        self.coordinator.register_command_hold(
+            self._serial,
+            {"operationMode", "power"},
+            duration=10.0,
+        )
+
+    async def async_turn_off(self) -> None:
+        await self._client.async_send_command(self._serial, {"power": 0})
+        device = self.device
+        if device:
+            device.power = False
+            self.coordinator.async_set_updated_data(dict(self.coordinator.data))
+        self.coordinator.register_command_hold(
+            self._serial,
+            {"power"},
+            duration=10.0,
+        )
+
+    async def async_toggle(self) -> None:
+        device = self.device
+        if device and device.power:
+            await self.async_turn_off()
+        else:
+            await self.async_turn_on()
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         if not fan_mode:
