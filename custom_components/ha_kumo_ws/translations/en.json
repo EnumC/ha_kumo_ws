@@ -1,0 +1,23 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Mitsubishi Comfort (Kumo Cloud)",
+        "description": "Connect to your Kumo Cloud account",
+        "data": {
+          "username": "Username (email)",
+          "password": "Password",
+          "refresh_on_connect": "Force device refresh on socket connect"
+        }
+      },
+      "sites": {
+        "title": "Select Sites",
+        "description": "Choose one or more sites to include",
+        "data": {
+          "site_ids": "Sites"
+        }
+      }
+    },
+    "error": {}
+  }
+}
