@@ -2,7 +2,7 @@
 
 from homeassistant.const import Platform
 
-DOMAIN = "mitsubishi_comfort"
+DOMAIN = "ha_kumo_ws"
 PLATFORMS: list[Platform] = [Platform.CLIMATE, Platform.SENSOR]
 
 CONF_SITE_IDS = "site_ids"

@@ -1,5 +1,5 @@
 {
-  "domain": "mitsubishi_comfort_ws",
+  "domain": "ha_kumo_ws",
   "name": "Mitsubishi Comfort (WS)",
   "version": "0.1.0",
   "documentation": "https://github.com/EnumC/ha_kumo_ws",
