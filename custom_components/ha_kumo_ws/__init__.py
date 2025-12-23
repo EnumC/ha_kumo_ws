@@ -8,6 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 
 from .pykumo2 import AuthenticationError, MitsubishiComfortClient
 
@@ -21,6 +22,9 @@ async def async_setup(hass: HomeAssistant, _config: dict) -> bool:
     """Set up via config.yaml (not supported)."""
     hass.data.setdefault(DOMAIN, {})
     return True
+
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
