@@ -37,6 +37,7 @@ class SocketUpdateManager:
         self._sio: socketio.AsyncClient | None = None
         self._wait_task: asyncio.Task | None = None
         self._stopping = asyncio.Event()
+        self._reconnect_task: asyncio.Task | None = None
 
     @property
     def running(self) -> bool:
@@ -54,9 +55,9 @@ class SocketUpdateManager:
 
         self._sio = socketio.AsyncClient(
             reconnection=True,
-            reconnection_attempts=5,
+            reconnection_attempts=0,  # unlimited
             reconnection_delay=2,
-            reconnection_delay_max=10,
+            reconnection_delay_max=30,
             logger=False,
             engineio_logger=False,
         )
@@ -80,6 +81,9 @@ class SocketUpdateManager:
     async def stop(self) -> None:
         """Disconnect and stop waiting for events."""
         self._stopping.set()
+        if self._reconnect_task:
+            self._reconnect_task.cancel()
+            self._reconnect_task = None
         if self._sio:
             try:
                 await self._sio.disconnect()
@@ -107,6 +111,9 @@ class SocketUpdateManager:
 
     async def _on_disconnect(self) -> None:
         await self._dispatch("disconnected", {})
+        _LOGGER.debug("Socket disconnected")
+        if not self._stopping.is_set() and not self._reconnect_task:
+            self._reconnect_task = asyncio.create_task(self._attempt_reconnect())
 
     async def _on_connect_error(self, data) -> None:
         _LOGGER.debug("Socket connect_error: %s", data)
@@ -131,3 +138,15 @@ class SocketUpdateManager:
                 await result
         except Exception as exc:  # pragma: no cover - defensive
             _LOGGER.warning("Socket callback failure for %s: %s", event, exc)
+
+    async def _attempt_reconnect(self) -> None:
+        """Retry connecting until stopped."""
+        while not self._stopping.is_set():
+            try:
+                _LOGGER.debug("Attempting socket reconnect")
+                await self.start()
+                self._reconnect_task = None
+                return
+            except Exception as exc:
+                _LOGGER.error("Socket reconnect failed: %s", exc)
+                await asyncio.sleep(5)
