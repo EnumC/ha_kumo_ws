@@ -48,6 +48,8 @@ API_TO_HVAC = {
     "vent": HVACMode.FAN_ONLY,
 }
 
+RANGE_HVAC_MODES = {HVACMode.HEAT_COOL, HVACMode.AUTO}
+
 FAN_MODES = ["superQuiet", "quiet", "low", "powerful", "superPowerful", "auto"]
 SWING_MODES = [
     "auto",
@@ -150,17 +152,21 @@ class MitsubishiComfortClimateEntity(CoordinatorEntity[MitsubishiComfortCoordina
     @property
     def target_temperature(self) -> float | None:
         device = self.device
-        if self.hvac_mode == HVACMode.HEAT_COOL:
+        if self.hvac_mode in RANGE_HVAC_MODES:
             return None
         return device.target_temperature() if device else None
 
     @property
     def target_temperature_low(self) -> float | None:
+        if self.hvac_mode not in RANGE_HVAC_MODES:
+            return None
         device = self.device
         return device.sp_heat if device else None
 
     @property
     def target_temperature_high(self) -> float | None:
+        if self.hvac_mode not in RANGE_HVAC_MODES:
+            return None
         device = self.device
         return device.sp_cool if device else None
 
