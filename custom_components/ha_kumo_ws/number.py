@@ -104,8 +104,32 @@ class MitsubishiComfortLocalTempCalibrationNumber(_BaseMitsubishiNumber):
         return device.room_temp_offset if device else None
 
     async def async_set_native_value(self, value: float) -> None:
-        await self._client.async_set_room_temp_offset(self._serial, float(value))
         device = self.device
+        prior_sp_cool = device.sp_cool if device else None
+        prior_sp_heat = device.sp_heat if device else None
+
+        await self._client.async_set_room_temp_offset(self._serial, float(value))
         if device:
             device.room_temp_offset = float(value)
             self.coordinator.async_set_updated_data(dict(self.coordinator.data))
+
+        commands: dict[str, float] = {}
+        if prior_sp_cool is not None:
+            commands["spCool"] = prior_sp_cool
+        if prior_sp_heat is not None:
+            commands["spHeat"] = prior_sp_heat
+        if not commands:
+            return
+
+        await self._client.async_send_command(self._serial, commands)
+        if device:
+            if "spCool" in commands:
+                device.sp_cool = commands["spCool"]
+            if "spHeat" in commands:
+                device.sp_heat = commands["spHeat"]
+            self.coordinator.async_set_updated_data(dict(self.coordinator.data))
+        self.coordinator.register_command_hold(
+            self._serial,
+            set(commands.keys()),
+            duration=10.0,
+        )
