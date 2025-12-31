@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from .payloads import DeviceUpdatePayload, ZoneResponse
+
 
 @dataclass
 class TokenInfo:
@@ -64,6 +66,7 @@ class DeviceState:
     sp_cool: float | None = None
     sp_heat: float | None = None
     humidity: float | None = None
+    room_temp_offset: float | None = None
     operation_mode: str | None = None
     power: bool = False
     fan_speed: str | None = None
@@ -95,60 +98,12 @@ class DeviceState:
 
     def update_from_zone(self, zone: dict[str, Any]) -> None:
         """Update state from a zone payload that includes adapter data."""
-        self.zone_id = zone.get("id", self.zone_id)
-        adapter = zone.get("adapter", {})
-        self.name = zone.get("name", self.name)
-        self.apply_update(adapter)
+        zone_payload = ZoneResponse.model_validate(zone)
+        if zone_payload.id:
+            self.zone_id = zone_payload.id
+        zone_payload.apply_to_device(self)
 
     def apply_update(self, payload: dict[str, Any]) -> None:
         """Merge any payload into the device state."""
-        if "name" in payload:
-            self.name = payload["name"]
-        if "roomTemp" in payload:
-            self.room_temp = payload.get("roomTemp")
-        if "spCool" in payload:
-            self.sp_cool = payload.get("spCool")
-        if "spHeat" in payload:
-            self.sp_heat = payload.get("spHeat")
-        if "humidity" in payload:
-            self.humidity = payload.get("humidity")
-        if "operationMode" in payload or "mode" in payload:
-            self.operation_mode = payload.get("operationMode") or payload.get("mode")
-        if "power" in payload:
-            self.power = bool(payload.get("power"))
-        if "fanSpeed" in payload:
-            fan = payload.get("fanSpeed")
-            if fan in self.VALID_FAN_SPEEDS:
-                self.fan_speed = fan
-        if "airDirection" in payload:
-            direction = payload.get("airDirection")
-            if direction in self.VALID_AIR_DIRECTIONS:
-                self.air_direction = direction
-        if "scheduleOwner" in payload:
-            self.schedule_owner = payload.get("scheduleOwner")
-        if "lastStatusChangeAt" in payload:
-            self.last_status_change = payload.get("lastStatusChangeAt")
-        if "rssi" in payload:
-            self.rssi = payload.get("rssi")
-        if "twoFiguresCode" in payload:
-            self.two_figures_code = payload.get("twoFiguresCode")
-        if "serialNumber" in payload:
-            self.serial_number = payload.get("serialNumber")
-        if "modelNumber" in payload or "model" in payload or "modelName" in payload:
-            self.model_number = payload.get("modelNumber") or payload.get("model") or payload.get("modelName")
-        if "connected" in payload:
-            self.connected = bool(payload.get("connected"))
-        if "status" in payload:
-            # device_status_v2 uses status to indicate connectivity
-            self.connected = payload.get("status") == "connected"
-        if "lastTimeConnected" in payload:
-            self.raw["lastTimeConnected"] = payload.get("lastTimeConnected")
-        if "lastTimeDisconnected" in payload:
-            self.raw["lastTimeDisconnected"] = payload.get("lastTimeDisconnected")
-        if "lastDisconnectedReason" in payload:
-            self.raw["lastDisconnectedReason"] = payload.get("lastDisconnectedReason")
-        if "displayConfig" in payload and isinstance(payload.get("displayConfig"), dict):
-            self.display_config = payload.get("displayConfig", {})
-
-        # Keep a merged raw copy for debugging
-        self.raw.update(payload)
+        device_payload = DeviceUpdatePayload.model_validate(payload)
+        device_payload.apply_to_device(self)

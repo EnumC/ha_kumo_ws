@@ -12,6 +12,7 @@ import httpx
 from .const import BASE_URL, DEFAULT_FORCE_REQUESTS, DEFAULT_HEADERS, SOCKET_URL
 from .errors import AuthenticationError, MitsubishiComfortError
 from .models import DeviceState, TokenInfo
+from .payloads import DeviceDetailsResponse, DeviceStatusResponse, ZoneResponse
 
 class MitsubishiComfortClient:
     """Async HTTP client that mirrors the behavior of the mobile app."""
@@ -102,6 +103,7 @@ class MitsubishiComfortClient:
         endpoint: str,
         json_data: dict[str, Any] | None = None,
         require_auth: bool = True,
+        extra_headers: dict[str, str] | None = None,
     ) -> Any:
         """Issue an HTTP request with automatic token refresh."""
         headers: dict[str, str] = {}
@@ -110,6 +112,8 @@ class MitsubishiComfortClient:
             if not self._tokens:
                 raise AuthenticationError("Missing token after authentication.")
             headers["Authorization"] = f"Bearer {self._tokens.access}"
+        if extra_headers:
+            headers.update(extra_headers)
 
         client = await self._ensure_http_client()
         # Debug log outbound request
@@ -178,18 +182,21 @@ class MitsubishiComfortClient:
         """Return device states keyed by serial, built from the zones endpoint."""
         devices: dict[str, DeviceState] = {}
         for zone in await self.async_get_zones(site_id):
-            adapter = zone.get("adapter", {})
-            serial = adapter.get("deviceSerial")
+            zone_payload = ZoneResponse.model_validate(zone)
+            adapter = zone_payload.adapter
+            serial = adapter.deviceSerial if adapter else None
             if not serial:
                 continue
             device = devices.get(serial) or DeviceState(
                 serial=serial,
-                name=zone.get("name", serial),
-                zone_id=zone.get("id"),
-                model_number=adapter.get("modelNumber"),
-                serial_number=adapter.get("serialNumber"),
+                name=zone_payload.name or serial,
+                zone_id=zone_payload.id,
+                model_number=adapter.modelNumber if adapter else None,
+                serial_number=adapter.serialNumber if adapter else None,
             )
-            device.update_from_zone(zone)
+            if zone_payload.id:
+                device.zone_id = zone_payload.id
+            zone_payload.apply_to_device(device)
             devices[serial] = device
 
         # Enrich missing model numbers via device endpoint (one per missing device)
@@ -198,19 +205,18 @@ class MitsubishiComfortClient:
                 continue
             try:
                 details = await self._request("GET", f"/v3/devices/{serial}")
-                model_number = (
-                    details.get("modelNumber")
-                    or details.get("model")
-                    or details.get("modelName")
-                )
-                serial_number = details.get("serialNumber")
-                if model_number:
-                    device.model_number = model_number
-                if serial_number:
-                    device.serial_number = serial_number
-                device.raw.update(details)
+                DeviceDetailsResponse.model_validate(details).apply_to_device(device)
             except Exception:
                 # Best-effort; skip if request fails
+                continue
+        for serial, device in devices.items():
+            if device.room_temp_offset is not None:
+                continue
+            try:
+                status = await self.async_get_device_status(serial)
+                if isinstance(status, dict):
+                    DeviceStatusResponse.model_validate(status).apply_to_device(device)
+            except Exception:
                 continue
         return devices
 
@@ -225,6 +231,23 @@ class MitsubishiComfortClient:
         """Send a command payload to a device."""
         payload = {"deviceSerial": device_serial, "commands": commands}
         return await self._request("POST", "/v3/devices/send-command", json_data=payload)
+
+    async def async_get_device_status(self, device_serial: str) -> dict[str, Any]:
+        """Return adapter status for a device (includes display offset)."""
+        return await self._request("GET", f"/v3/devices/{device_serial}/status")
+
+    async def async_set_room_temp_offset(self, device_serial: str, offset_c: float) -> dict[str, Any]:
+        """Set the local room temperature offset in Celsius."""
+        payload = {
+            "serial": device_serial,
+            "adapter": {"status": {"roomTempOffset": offset_c}},
+        }
+        return await self._request(
+            "POST",
+            f"/v3/devices/{device_serial}/relay-command",
+            json_data=payload,
+            extra_headers={"x-allow-cache": "true"},
+        )
 
     async def async_force_refresh_payload(
         self,

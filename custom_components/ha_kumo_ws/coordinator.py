@@ -18,6 +18,13 @@ from .pykumo2 import (
     MitsubishiComfortError,
     SocketUpdateManager,
 )
+from .pykumo2.payloads import (
+    AdapterUpdatePayload,
+    AcoilUpdatePayload,
+    DeviceStatusV2Payload,
+    DeviceUpdatePayload,
+    ProfileUpdatePayload,
+)
 
 from .const import DOMAIN
 
@@ -85,7 +92,13 @@ class MitsubishiComfortCoordinator(DataUpdateCoordinator[Dict[str, DeviceState]]
 
     async def _handle_socket_event(self, event: str, payload: dict) -> None:
         """Handle incoming socket event and update coordinator data."""
-        if event not in ("device_update", "device_status_v2"):
+        if event not in (
+            "device_update",
+            "device_status_v2",
+            "profile_update",
+            "adapter_update",
+            "acoil_update",
+        ):
             return
 
         serial = payload.get("deviceSerial")
@@ -120,7 +133,16 @@ class MitsubishiComfortCoordinator(DataUpdateCoordinator[Dict[str, DeviceState]]
             "spCool": device.sp_cool,
             "spHeat": device.sp_heat,
         }
-        device.apply_update(payload)
+        if event == "device_update":
+            DeviceUpdatePayload.model_validate(payload).apply_to_device(device)
+        elif event == "device_status_v2":
+            DeviceStatusV2Payload.model_validate(payload).apply_to_device(device)
+        elif event == "profile_update":
+            ProfileUpdatePayload.model_validate(payload).apply_to_device(device)
+        elif event == "adapter_update":
+            AdapterUpdatePayload.model_validate(payload).apply_to_device(device)
+        elif event == "acoil_update":
+            AcoilUpdatePayload.model_validate(payload).apply_to_device(device)
 
         after_state = {
             "mode": device.operation_mode,

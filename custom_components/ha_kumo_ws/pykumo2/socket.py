@@ -67,6 +67,9 @@ class SocketUpdateManager:
         self._sio.on("connect_error", self._on_connect_error)
         self._sio.on("device_update", self._on_device_update)
         self._sio.on("device_status_v2", self._on_device_status)
+        self._sio.on("profile_update", self._on_profile_update)
+        self._sio.on("adapter_update", self._on_adapter_update)
+        self._sio.on("acoil_update", self._on_acoil_update)
 
         await self._sio.connect(
             SOCKET_URL,
@@ -126,6 +129,18 @@ class SocketUpdateManager:
     async def _on_device_status(self, data: dict) -> None:
         _LOGGER.debug("Socket device_status_v2:\n%s", json.dumps(data, indent=2, sort_keys=True))
         await self._dispatch("device_status_v2", data)
+
+    async def _on_profile_update(self, data: dict) -> None:
+        _LOGGER.debug("Socket profile_update:\n%s", json.dumps(data, indent=2, sort_keys=True))
+        await self._dispatch("profile_update", data)
+
+    async def _on_adapter_update(self, data: dict) -> None:
+        _LOGGER.debug("Socket adapter_update:\n%s", json.dumps(data, indent=2, sort_keys=True))
+        await self._dispatch("adapter_update", data)
+
+    async def _on_acoil_update(self, data: dict) -> None:
+        _LOGGER.debug("Socket acoil_update:\n%s", json.dumps(data, indent=2, sort_keys=True))
+        await self._dispatch("acoil_update", data)
 
     async def _dispatch(self, event: str, payload: dict) -> None:
         """Call the provided callback safely."""
