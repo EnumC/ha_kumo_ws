@@ -59,7 +59,7 @@ def check_host(ip: str, connect_timeout: float, http_timeout: float) -> Result:
             url,
             json=PUT_JSON,
             headers={"Content-Type": "application/json"},
-            timeout=(connect_timeout, http_timeout),
+            timeout=(http_timeout),
         )
         body = (r.text or "").strip()
         matched = TARGET_STR in body
@@ -83,18 +83,18 @@ def parse_args() -> argparse.Namespace:
         "cidr",
         help='IP range in CIDR notation, e.g. "192.168.4.0/24"',
     )
-    p.add_argument("--workers", type=int, default=128, help="Concurrent workers (default: 128)")
+    p.add_argument("--workers", type=int, default=255, help="Concurrent workers (default: 255)")
     p.add_argument(
         "--connect-timeout",
         type=float,
-        default=5,
-        help="TCP connect timeout seconds (default: 5)",
+        default=1,
+        help="TCP connect timeout seconds (default: 1)",
     )
     p.add_argument(
         "--http-timeout",
         type=float,
-        default=5,
-        help="HTTP read timeout seconds (default: 5)",
+        default=10,
+        help="HTTP read timeout seconds (default: 10)",
     )
     p.add_argument(
         "--verbose",
