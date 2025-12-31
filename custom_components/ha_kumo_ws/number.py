@@ -82,7 +82,7 @@ class _BaseMitsubishiNumber(CoordinatorEntity[MitsubishiComfortCoordinator], Num
 class MitsubishiComfortLocalTempCalibrationNumber(_BaseMitsubishiNumber):
     """Expose local room temperature calibration."""
 
-    _attr_device_class = NumberDeviceClass.TEMPERATURE
+    _attr_device_class = NumberDeviceClass.TEMPERATURE_DELTA
     _attr_entity_category = EntityCategory.CONFIG
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_native_min_value = OFFSET_MIN_C
