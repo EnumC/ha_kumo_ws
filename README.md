@@ -4,6 +4,10 @@ This repo is based off the amazing work of [dlarrick/hass-kumo](https://github.c
 
 This version has been updated and rewritten to use WebSocket for live updates (cloud push) instead of polling, which result in much faster updates.
 
+## Update
+- The original [dlarrick/hass-kumo](https://github.com/dlarrick/hass-kumo) plugin has been updated in v0.4.1 and works again! I recommend trying that one first as direct local communication will always be faster than bouncing the request off of the cloud API. If you run into issues, give this repo a try.
+- There are some additional sensors and actions exposed in the websocket version that has not been ported to the upstream repo yet, such as setting offset temp, and some fixes for compatibility with matterbridge. If you need those features, you may want to continue using the websocket version (or open a PR to implement them in the upstream repo!)
+
 ## Features
 - Config flow: username/password, site selection (multi-site supported)
 - Live updates via websocket; REST for device discovery
