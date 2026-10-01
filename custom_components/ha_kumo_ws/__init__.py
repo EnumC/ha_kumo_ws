@@ -11,6 +11,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 
 from .const import (
+    CN105_ENTITY_KEYS,
     CONF_CONNECTION_MODE,
     CONF_REFRESH_ON_CONNECT,
     CONF_SETUP_METHOD,
@@ -54,9 +55,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: KumoConfigEntry) -> bool
             translation_placeholders={"error": type(err).__name__},
         ) from err
     entry.runtime_data = hub
+    if hub.cn105_enabled:
+        _enable_cn105_entities(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, ENTRY_PLATFORMS)
     async_setup_repairs(hass, entry)
     return True
+
+
+@callback
+def _enable_cn105_entities(hass: HomeAssistant, entry: KumoConfigEntry) -> None:
+    """Re-enable CN105 entities that older versions created disabled."""
+    registry = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if entity.disabled_by is er.RegistryEntryDisabler.INTEGRATION and any(
+            entity.unique_id.endswith(f"_{key}") for key in CN105_ENTITY_KEYS
+        ):
+            registry.async_update_entity(entity.entity_id, disabled_by=None)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: KumoConfigEntry) -> bool:

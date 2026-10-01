@@ -51,7 +51,6 @@ BINARY_SENSORS: tuple[KumoBinarySensorDescription, ...] = (
         key="compressor_running",
         translation_key="compressor_running",
         device_class=BinarySensorDeviceClass.RUNNING,
-        entity_registry_enabled_default=False,
         is_on_fn=lambda c: None if c.data.cn105 is None else c.data.cn105.operating,
         local_only=True,
         cn105=True,
