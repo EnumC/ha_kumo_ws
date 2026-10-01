@@ -2,26 +2,14 @@
 
 This repo is based off the amazing work of [dlarrick/hass-kumo](https://github.com/dlarrick/hass-kumo), [jjustinwilson/comfort_HA](https://github.com/jjustinwilson/comfort_HA), and [ventz/kumo-cloud-v3-api-comfort-client](https://github.com/ventz/kumo-cloud-v3-api-comfort-client).
 
-This version has been updated and rewritten to use WebSocket for live updates (cloud push) instead of polling, which result in much faster updates.
+This version has been updated and rewritten to use WebSocket for live updates (cloud push) instead of polling, which result in much faster updates. If you have local unit credentials, it also exposes low level unit attributes and have the capability to configure custom temperature sources.
 
 ## Update
-- The original [dlarrick/hass-kumo](https://github.com/dlarrick/hass-kumo) plugin has been updated in v0.4.1 and works again! I recommend trying that one first as direct local communication will always be faster than bouncing the request off of the cloud API. If you run into issues, give this repo a try.
-- There are some additional sensors and actions exposed in the websocket version that has not been ported to the upstream repo yet, such as setting offset temp, and some fixes for compatibility with matterbridge. If you need those features, you may want to continue using the websocket version (or open a PR to implement them in the upstream repo!)
+- Sept 2026: Unfortunately the original hass-kumo stopped working again due to api changes. You can switch back to this ws version if you're impacted. If you have valid local unit credentials, this integration can also ingest it now and will route requests locally for requests where this would be faster. To do so, the setup will have an "Import existing Kumo setup" option. If you plan to use this option, do not remove your existing pykumo devices until you're set up on the ws integration.
 
-## Features
-- Config flow: username/password, site selection (multi-site supported)
-- Live updates via websocket; REST for device discovery
-- Climate entities with fan/swing control, dual setpoints in Auto mode, optimistic updates, and stale-update guards
-- Exposes RSSI, error codes, serial number, and model number for each device.
+- ~~The original [dlarrick/hass-kumo](https://github.com/dlarrick/hass-kumo) plugin has been updated in v0.4.1 and works again! I recommend trying that one first as direct local communication will always be faster than bouncing the request off of the cloud API. If you run into issues, give this repo a try.~~
+- ~~There are some additional sensors and actions exposed in the websocket version that has not been ported to the upstream repo yet, such as setting offset temp, and some fixes for compatibility with matterbridge. If you need those features, you may want to continue using the websocket version (or open a PR to implement them in the upstream repo!)~~
 
-## Project Layout
-- `/custom_components/ha_kumo_ws/` — Home Assistant custom component
-  - `climate.py` — climate entity
-  - `sensor.py` — RSSI / twoFiguresCode sensors
-  - `coordinator.py` — REST + socket coordinator with stale-update holds
-  - `config_flow.py` — credentials + site selector
-  - `pykumo2/` — async HTTP + socket client
-- `pykumo2_smoke.py` — standalone smoke test (auth, site, devices, socket stream)
 
 ## Getting Started (Home Assistant)
 
@@ -45,6 +33,24 @@ Alternatively, add this repo manually in HACS:
 - Enter your username and password
 - Select the site you want to monitor
 - Click "Submit"
+
+## Features
+- Config flow: username/password, site selection (multi-site supported)
+- Live updates via websocket; REST for device discovery
+- Intelligently avoid race conditions by queuing and invalidating requests/updates.
+- Climate entities with fan/swing control, dual setpoints in Auto mode, and guards against stale update values.
+- NEW (local required): Selectable temperature source (on device thermistor, wireless sensor (PAC-USWHS003-TH-1, must pair in official app first), or from a Home Assistant sensor entity). Home Assistant sensor entity will also be available without local creds in a future update, so stay tuned!
+- NEW (local required): Real compressor running state to drive hvac_action. 
+- Exposes RSSI, error codes, serial number, and model number for each device.
+
+## Project Layout
+- `/custom_components/ha_kumo_ws/` — Home Assistant custom component
+  - `climate.py` — climate entity
+  - `sensor.py` — RSSI / twoFiguresCode sensors
+  - `coordinator.py` — REST + socket coordinator with stale-update holds
+  - `config_flow.py` — credentials + site selector
+  - `pykumo2/` — async HTTP + socket client
+- `pykumo2_smoke.py` — standalone smoke test (auth, site, devices, socket stream)
 
 ## Smoke Test
 Use your `.env` (`KUMO_USERNAME`, `KUMO_PASSWORD`, optional `KUMO_SITE_IDS`) and run:
