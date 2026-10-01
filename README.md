@@ -1,8 +1,9 @@
 # Mitsubishi Comfort Home Assistant WebSocket Integration (Custom Component)
 
-This repo is based off the amazing work of [dlarrick/hass-kumo](https://github.com/dlarrick/hass-kumo), [jjustinwilson/comfort_HA](https://github.com/jjustinwilson/comfort_HA), and [ventz/kumo-cloud-v3-api-comfort-client](https://github.com/ventz/kumo-cloud-v3-api-comfort-client).
 
-This version has been updated and rewritten to use WebSocket for live updates (cloud push) instead of polling, which result in much faster updates. If you have local unit credentials, it also exposes low level unit attributes and have the capability to configure custom temperature sources.
+The most comprehensive Comfort integration for HACS yet. This repo is based off the amazing work of [dlarrick/hass-kumo](https://github.com/dlarrick/hass-kumo), [jjustinwilson/comfort_HA](https://github.com/jjustinwilson/comfort_HA), and [ventz/kumo-cloud-v3-api-comfort-client](https://github.com/ventz/kumo-cloud-v3-api-comfort-client).
+
+This custom component has been updated and rewritten to use WebSocket for live updates (cloud push) instead of polling, which result in much faster updates. If you have local unit credentials, it also exposes low level unit attributes and have the capability to configure custom temperature sources.
 
 ## Update
 - Sept 2026: Unfortunately the original hass-kumo stopped working again due to api changes. You can switch back to this ws version if you're impacted. If you have valid local unit credentials, this integration can also ingest it now and will route requests locally for requests where this would be faster. To do so, the setup will have an "Import existing Kumo setup" option. If you plan to use this option, do not remove your existing pykumo devices until you're set up on the ws integration.
