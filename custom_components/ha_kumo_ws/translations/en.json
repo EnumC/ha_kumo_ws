@@ -5,8 +5,8 @@
         "title": "Mitsubishi Comfort (Kumo)",
         "description": "Choose how to set up the integration.",
         "menu_options": {
+          "cloud_ws": "Set up using cloud websocket only (Recommended)",
           "import_backup": "Set up using existing local unit credential backup",
-          "cloud_ws": "Set up using cloud websocket only",
           "cloud_fetch": "Set up by fetching local unit credentials from cloud (currently broken)",
           "import_pykumo": "Import existing Kumo (hass-kumo / pykumo) setup"
         }

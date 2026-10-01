@@ -276,7 +276,7 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Pick a setup method."""
-        menu = ["import_backup", "cloud_ws", "cloud_fetch"]
+        menu = ["cloud_ws", "import_backup", "cloud_fetch"]
         self._legacy = await async_detect(self.hass)
         if self._legacy.found:
             menu.append("import_pykumo")
