@@ -30,6 +30,14 @@
         "title": "Confirm unit addresses",
         "description": "| Serial | Name | Address | Found |\n|---|---|---|---|\n{units}\n\nAddresses found on the network are prefilled. Leave a field empty if unknown; the integration keeps looking for that unit.\n\nSkipped entries: {skipped}"
       },
+      "cn105": {
+        "title": "CN105 telemetry (experimental)",
+        "description": "Reads extra telemetry (outdoor temperature, compressor state) over the unit's CN105 bus through the adapter. Experimental: only one local client should talk to a unit, and code 0x06 may lock the bus until the adapter reboots if the hardware does not support it. This can be changed later in the integration options.",
+        "data": {
+          "cn105_enabled": "Enable",
+          "cn105_codes": "Request codes"
+        }
+      },
       "cloud_login": {
         "title": "Kumo Cloud login",
         "description": "Sign in with your Kumo Cloud account.",
@@ -197,7 +205,7 @@
       },
       "cn105": {
         "title": "CN105 telemetry (experimental)",
-        "description": "Reads extra telemetry (outdoor temperature, compressor state) over the unit's CN105 bus through the adapter. Experimental: only one local client should talk to a unit, and code 0x06 can lock the bus on some units until the adapter reboots.",
+        "description": "Reads extra telemetry (outdoor temperature, compressor state) over the unit's CN105 bus through the adapter. Experimental: only one local client should talk to a unit, and code 0x06 may lock the bus until the adapter reboots if the hardware does not support it.",
         "data": {
           "cn105_enabled": "Enable",
           "cn105_codes": "Request codes",
@@ -311,7 +319,7 @@
       "options": {
         "3": "0x03 temperatures",
         "9": "0x09 operating state",
-        "6": "0x06 compressor frequency (may lock the bus)"
+        "6": "0x06 compressor frequency (may lock the bus if hardware unsupported)"
       }
     }
   },

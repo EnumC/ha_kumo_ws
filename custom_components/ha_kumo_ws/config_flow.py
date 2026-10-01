@@ -69,6 +69,7 @@ from .const import (
     CONF_SOCKET_IDLE_DISCONNECT,
     CONF_TARGET_TEMP_STEP,
     CREDENTIAL_FETCH_TIMEOUT_S,
+    DEFAULT_CN105_CODES,
     DEFAULT_OPTIONS,
     DEFAULT_RT_INTERVAL,
     DOMAIN,
@@ -176,6 +177,39 @@ def _unit_rows(units: Mapping[str, UnitCredentials], found: Mapping[str, str] | 
     return "\n".join(rows) or "| - | - | - | - |"
 
 
+def _usable(unit: UnitCredentials) -> bool:
+    try:
+        unit.validate()
+    except ValueError:
+        return False
+    return True
+
+
+def _cn105_schema() -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required(CONF_CN105_ENABLED, default=False): BooleanSelector(),
+            vol.Optional(
+                CONF_CN105_CODES, default=[str(code) for code in DEFAULT_CN105_CODES]
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[str(code) for code in CN105_CODES],
+                    multiple=True,
+                    translation_key="cn105_codes",
+                )
+            ),
+        }
+    )
+
+
+def _cn105_options(user_input: Mapping[str, Any]) -> dict[str, Any]:
+    codes = {int(code) for code in user_input.get(CONF_CN105_CODES) or []}
+    return {
+        CONF_CN105_ENABLED: bool(user_input[CONF_CN105_ENABLED]),
+        CONF_CN105_CODES: [code for code in CN105_CODES if code in codes],
+    }
+
+
 def _cloud_client(
     flow: ConfigFlow, login: Mapping[str, str], clock: SystemClock, ledger: CloudCallLedger
 ) -> tuple[CloudRestClient, TokenManager]:
@@ -202,6 +236,7 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
         self._units: dict[str, UnitCredentials] = {}
         self._decode_errors: list[str] = []
         self._cidrs: list[str] = []
+        self._cn105: dict[str, Any] = {}
         self._addresses: dict[str, str] = {}
         self._missing: dict[str, str] = {}
         self._fetch_failed = False
@@ -263,7 +298,12 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
         data: dict[str, Any] = {CONF_SETUP_METHOD: method.value}
         if self._login:
             data |= {**self._login, CONF_SITE_IDS: self._site_ids}
-        options = {**DEFAULT_OPTIONS, CONF_CONNECTION_MODE: mode, CONF_CIDRS: self._cidrs}
+        options = {
+            **DEFAULT_OPTIONS,
+            **self._cn105,
+            CONF_CONNECTION_MODE: mode,
+            CONF_CIDRS: self._cidrs,
+        }
         return self.async_create_entry(title=title, data=data, options=options)
 
     async def _async_disable_legacy(self) -> None:
@@ -392,9 +432,9 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def _async_finish_units(self) -> ConfigFlowResult:
-        """Write the Store first, then create or update the entry."""
-        units = list(self._units.values())
+        """Reconfigure updates the entry; a new entry asks about CN105 first."""
         if self.source == SOURCE_RECONFIGURE:
+            units = list(self._units.values())
             entry = self._get_reconfigure_entry()
             await async_save_units(self.hass, entry.unique_id or entry.entry_id, units)
             return self.async_update_reload_and_abort(
@@ -407,6 +447,22 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_CIDRS: self._cidrs,
                 },
             )
+        if not any(_usable(unit) for unit in self._units.values()):
+            return await self._async_create_local_entry()
+        return await self.async_step_cn105()
+
+    async def async_step_cn105(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Opt in to CN105 telemetry; offered only with usable local credentials."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="cn105", data_schema=_cn105_schema(), last_step=True
+            )
+        self._cn105 = _cn105_options(user_input)
+        return await self._async_create_local_entry()
+
+    async def _async_create_local_entry(self) -> ConfigFlowResult:
+        """Write the Store first, then create the entry."""
+        units = list(self._units.values())
         assert self.unique_id is not None
         await async_save_units(self.hass, self.unique_id, units)
         if self._method is SetupMethod.CLOUD_FETCH:
@@ -957,27 +1013,15 @@ class KumoOptionsFlow(OptionsFlowWithReload):
         """CN105 telemetry (experimental)."""
         current = self._current()
         if user_input is not None:
-            codes = {int(code) for code in user_input.get(CONF_CN105_CODES) or []}
             return self.async_create_entry(
                 data={
                     **current,
-                    CONF_CN105_ENABLED: bool(user_input[CONF_CN105_ENABLED]),
-                    CONF_CN105_CODES: [code for code in CN105_CODES if code in codes],
+                    **_cn105_options(user_input),
                     CONF_CN105_INTERVAL: int(user_input[CONF_CN105_INTERVAL]),
                 }
             )
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_CN105_ENABLED): BooleanSelector(),
-                vol.Optional(CONF_CN105_CODES): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[str(code) for code in CN105_CODES],
-                        multiple=True,
-                        translation_key="cn105_codes",
-                    )
-                ),
-                vol.Required(CONF_CN105_INTERVAL): _seconds(MIN_CN105_INTERVAL, 3600),
-            }
+        schema = _cn105_schema().extend(
+            {vol.Required(CONF_CN105_INTERVAL): _seconds(MIN_CN105_INTERVAL, 3600)}
         )
         suggested = {**current, CONF_CN105_CODES: [str(c) for c in current[CONF_CN105_CODES]]}
         return self.async_show_form(
