@@ -20,7 +20,7 @@ _AUTH_REJECTED = frozenset({400, 401, 403})
 
 def default_client_factory() -> httpx.AsyncClient:
     """HTTP/2 client like the app. Loads CA certs, so call it off the event loop."""
-    return httpx.AsyncClient(http2=True, timeout=30.0)
+    return httpx.AsyncClient(timeout=30.0)
 
 
 class CloudRestClient:
