@@ -1,11 +1,50 @@
 [project]
 name = "ha_kumo_ws"
-version = "0.1.0"
-requires-python = ">=3.13"
+version = "0.2.0"
+requires-python = ">=3.14"
 dependencies = [
     "httpx[http2]>=0.27.0",
-    "python-dotenv>=1.0.0",
     "python-socketio[client]>=5.11.0",
-    "pydantic>=2.6.0",
     "aiohttp>=3.9.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-homeassistant-custom-component",
+    "aioresponses",
+    "respx",
+    "freezegun",
+    "ruff",
+    "mypy",
+    "requests",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+exclude = ["custom_components/ha_token_auth"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "RUF"]
+
+[tool.mypy]
+python_version = "3.14"
+check_untyped_defs = true
+explicit_package_bases = true
+mypy_path = "."
+exclude = ["custom_components/ha_token_auth"]
+
+[[tool.mypy.overrides]]
+module = ["socketio", "socketio.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["custom_components.ha_kumo_ws.pykumo2", "custom_components.ha_kumo_ws.pykumo2.*"]
+strict = true
