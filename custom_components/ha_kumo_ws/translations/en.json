@@ -296,8 +296,8 @@
     "target_temp_step": {
       "options": {
         "auto": "Automatic (1 for Fahrenheit, 0.5 for Celsius)",
-        "0.5": "0.5 degree",
-        "1.0": "1 degree"
+        "half": "0.5 degree",
+        "whole": "1 degree"
       }
     },
     "fetch_action": {

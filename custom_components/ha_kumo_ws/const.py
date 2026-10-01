@@ -25,7 +25,7 @@ CONF_CN105_INTERVAL: Final = "cn105_interval"
 CONF_REMOTE_TEMP: Final = "remote_temp"
 CONF_LOCAL_ROOM_TEMP_OFFSET: Final = "local_room_temp_offset"
 CONF_TARGET_TEMP_STEP: Final = "target_temp_step"
-TARGET_TEMP_STEPS: Final = ("auto", "0.5", "1.0")
+TARGET_TEMP_STEPS: Final = ("auto", "half", "whole")
 
 CONF_RT_ENTITY: Final = "entity_id"
 CONF_RT_INTERVAL: Final = "interval"

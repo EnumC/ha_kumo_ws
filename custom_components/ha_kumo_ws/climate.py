@@ -129,7 +129,7 @@ class KumoClimate(KumoEntity, ClimateEntity):
         super().__init__(coordinator)
         fahrenheit = coordinator.hass.config.units.temperature_unit == UnitOfTemperature.FAHRENHEIT
         option = coordinator.config_entry.options.get(CONF_TARGET_TEMP_STEP, "auto")
-        whole = option == "1.0" or (option == "auto" and fahrenheit)
+        whole = option == "whole" or (option == "auto" and fahrenheit)
         self._attr_target_temperature_step = 1.0 if whole else 0.5
         if whole and fahrenheit:
             self._attr_precision = PRECISION_WHOLE
