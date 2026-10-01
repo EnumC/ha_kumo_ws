@@ -2,22 +2,511 @@
   "config": {
     "step": {
       "user": {
-        "title": "Mitsubishi Comfort (Kumo Cloud)",
-        "description": "Connect to your Kumo Cloud account",
+        "title": "Mitsubishi Comfort (Kumo)",
+        "description": "Choose how to set up the integration.",
+        "menu_options": {
+          "import_backup": "Set up using existing local unit credential backup",
+          "cloud_ws": "Set up using cloud websocket only",
+          "cloud_fetch": "Set up by fetching local unit credentials from cloud (currently broken)",
+          "import_pykumo": "Import existing Kumo (hass-kumo / pykumo) setup"
+        }
+      },
+      "import_backup": {
+        "title": "Import a credential backup",
+        "description": "Units are controlled on the local network only; no cloud login is used. A login can be added later with Reconfigure.\n\nSkipped entries: {skipped}",
+        "data": {
+          "backup": "Backup JSON",
+          "cidrs": "Subnets to scan"
+        },
+        "data_description": {
+          "backup": "A backup exported by this integration, a hass-kumo kumo_cache.json or a pykumo kumo.cfg.",
+          "cidrs": "For example 192.168.1.0/24, at most a /22 each. Leave empty to scan the networks of Home Assistant's adapters."
+        }
+      },
+      "discover": {
+        "title": "Looking for your units"
+      },
+      "confirm_addresses": {
+        "title": "Confirm unit addresses",
+        "description": "| Serial | Name | Address | Found |\n|---|---|---|---|\n{units}\n\nAddresses found on the network are prefilled. Leave a field empty if unknown; the integration keeps looking for that unit.\n\nSkipped entries: {skipped}"
+      },
+      "cloud_login": {
+        "title": "Kumo Cloud login",
+        "description": "Sign in with your Kumo Cloud account.",
         "data": {
           "username": "Username (email)",
-          "password": "Password",
-          "refresh_on_connect": "Force device refresh on socket connect"
+          "password": "Password"
         }
       },
       "sites": {
-        "title": "Select Sites",
-        "description": "Choose one or more sites to include",
+        "title": "Select sites",
+        "description": "Choose the sites to include ({site_count} found).",
         "data": {
           "site_ids": "Sites"
         }
+      },
+      "fetch_credentials": {
+        "title": "Fetching unit credentials"
+      },
+      "fetch_result": {
+        "title": "Some units have no local credentials",
+        "description": "Fetching local credentials from Kumo Cloud is currently broken. Credentials were fetched for {fetched} units. Missing: {missing}.\n\nRetry, continue (units without credentials are controlled through Kumo Cloud), or abort and use the backup import instead.",
+        "data": {
+          "action": "Next step"
+        }
+      },
+      "import_pykumo": {
+        "title": "Import existing Kumo setup",
+        "description": "- Files: {files}\n- hass-kumo entry: {entry}\n- Units with valid credentials: {unit_count} ({address_count} with an address)\n- Kumo Cloud account: {account}\n\nIf no unit credentials were found, the entry uses the cloud websocket only. kumo_cache.json and kumo.cfg are never changed.",
+        "data": {
+          "use_account": "Use the Kumo Cloud account",
+          "disable_source_entry": "Disable the hass-kumo entry"
+        },
+        "data_description": {
+          "use_account": "Adds cloud fallback (auto mode). Without it, units are controlled locally only.",
+          "disable_source_entry": "Running both integrations against the same units can conflict: each adapter accepts only a few connections and has a single CN105 reply buffer."
+        }
+      },
+      "pykumo_login": {
+        "title": "Kumo Cloud login failed",
+        "description": "The stored login for {username} did not work. Enter the current password, or continue without the account.",
+        "data": {
+          "password": "Password",
+          "skip_account": "Continue without the account"
+        },
+        "data_description": {
+          "password": "Leave empty to retry the stored password."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in again",
+        "description": "Kumo Cloud rejected the login for {username}. Enter the current password.",
+        "data": {
+          "password": "Password"
+        }
+      },
+      "reconfigure_import": {
+        "title": "Import a credential backup",
+        "description": "The cloud login is kept: units are then controlled locally, with Kumo Cloud as fallback (auto mode).\n\nSkipped entries: {skipped}",
+        "data": {
+          "backup": "Backup JSON",
+          "cidrs": "Subnets to scan"
+        },
+        "data_description": {
+          "backup": "A backup exported by this integration, a hass-kumo kumo_cache.json or a pykumo kumo.cfg.",
+          "cidrs": "For example 192.168.1.0/24, at most a /22 each. Leave empty to scan the networks of Home Assistant's adapters."
+        }
+      },
+      "reconfigure_login": {
+        "title": "Kumo Cloud login",
+        "description": "Add or replace the Kumo Cloud login. With a login, the auto and cloud only connection modes become available in the options.",
+        "data": {
+          "username": "Username (email)",
+          "password": "Password"
+        }
       }
     },
-    "error": {}
+    "progress": {
+      "discover": "Probing known addresses and scanning the network for your units. This can take a minute.",
+      "fetch_credentials": "Fetching unit credentials from Kumo Cloud. This can take up to a minute."
+    },
+    "error": {
+      "invalid_auth": "Invalid username or password.",
+      "cannot_connect": "Could not reach Kumo Cloud.",
+      "invalid_backup": "The text is not a valid backup, kumo_cache or kumo.cfg document.",
+      "no_units": "No unit with usable credentials was found.",
+      "invalid_cidr": "Enter valid CIDRs, each at most a /22.",
+      "invalid_ip": "Enter a valid IP address.",
+      "credential_fetch_failed": "Fetching credentials from Kumo Cloud failed.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This account or device is already configured.",
+      "reauth_successful": "Signed in again.",
+      "reconfigure_successful": "The entry was updated.",
+      "not_kumo_device": "This device is not a known Kumo adapter.",
+      "no_pykumo_data": "No hass-kumo or pykumo unit credentials or account were found.",
+      "fetch_aborted": "Setup aborted. Use the credential backup import instead.",
+      "wrong_account": "Use the Kumo Cloud account this entry was set up with."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "menu_options": {
+          "connection": "Connection",
+          "climate": "Climate",
+          "network": "Network",
+          "cn105": "CN105 telemetry (experimental)",
+          "remote_temp": "Remote temperature sensor",
+          "credentials": "Unit credentials"
+        }
+      },
+      "connection": {
+        "title": "Connection",
+        "data": {
+          "connection_mode": "Connection mode",
+          "poll_interval": "Poll interval",
+          "socket_idle_disconnect": "Cloud socket idle disconnect",
+          "refresh_on_connect": "Refresh state when the cloud socket connects"
+        },
+        "data_description": {
+          "connection_mode": "Auto uses the local network first and Kumo Cloud as fallback.",
+          "poll_interval": "How often each unit is polled on the local network.",
+          "socket_idle_disconnect": "Disconnect the cloud socket this long after the last unit stops needing it.",
+          "refresh_on_connect": "Ask the adapters for fresh status after every cloud socket (re)connect."
+        }
+      },
+      "climate": {
+        "title": "Climate",
+        "data": {
+          "target_temp_step": "Target temperature step"
+        },
+        "data_description": {
+          "target_temp_step": "Step of the target temperature control. Automatic uses 1 when Home Assistant is set to Fahrenheit and 0.5 otherwise."
+        }
+      },
+      "network": {
+        "title": "Network",
+        "description": "Pinned addresses: {pins}",
+        "data": {
+          "cidrs": "Subnets to scan",
+          "unit": "Pin an address for a unit",
+          "rescan": "Rescan now"
+        },
+        "data_description": {
+          "cidrs": "For example 192.168.1.0/24, at most a /22 each. Leave empty to scan the networks of Home Assistant's adapters.",
+          "unit": "Pick a unit to set or clear its pinned address on the next page.",
+          "rescan": "Look for all units on the subnets now."
+        }
+      },
+      "network_pin": {
+        "title": "Pinned address",
+        "description": "Unit {unit}, current address {address}. A pinned address is never changed by discovery. Leave empty to clear the pin.",
+        "data": {
+          "address": "IP address"
+        }
+      },
+      "rescan": {
+        "title": "Scanning"
+      },
+      "rescan_result": {
+        "title": "Rescan finished",
+        "description": "Found {found} of {total} units."
+      },
+      "cn105": {
+        "title": "CN105 telemetry (experimental)",
+        "description": "Reads extra telemetry (outdoor temperature, compressor state) over the unit's CN105 bus through the adapter. Experimental: only one local client should talk to a unit, and code 0x06 can lock the bus on some units until the adapter reboots.",
+        "data": {
+          "cn105_enabled": "Enable",
+          "cn105_codes": "Request codes",
+          "cn105_interval": "Interval"
+        },
+        "data_description": {
+          "cn105_interval": "At least 75 seconds."
+        }
+      },
+      "remote_temp": {
+        "title": "Remote temperature sensor",
+        "description": "Current mappings: {mapped}",
+        "data": {
+          "unit": "Unit"
+        }
+      },
+      "remote_temp_unit": {
+        "title": "Remote temperature sensor",
+        "description": "Unit {unit}. Clear the sensor to remove the mapping.",
+        "data": {
+          "entity_id": "Temperature sensor",
+          "interval": "Send interval",
+          "manage_source": "Manage the temperature source"
+        },
+        "data_description": {
+          "interval": "How often the temperature is sent to the unit when it does not change.",
+          "manage_source": "Switch the unit to the remote temperature and restore its previous source when the sensor is unavailable or the mapping is removed."
+        }
+      },
+      "credentials": {
+        "title": "Unit credentials",
+        "menu_options": {
+          "view_credentials": "View and back up credentials",
+          "export_kumo_cache": "Export as hass-kumo kumo_cache",
+          "import_credentials": "Import credentials",
+          "refresh_from_cloud": "Refresh from cloud (currently broken)"
+        }
+      },
+      "view_credentials": {
+        "title": "Show unit secrets?",
+        "description": "The next page shows unit passwords and crypto serials. Anyone with them can control your units on the local network. Continue only on a trusted screen."
+      },
+      "export_kumo_cache": {
+        "title": "Show unit secrets?",
+        "description": "The next page shows unit passwords and crypto serials in the hass-kumo kumo_cache format. Anyone with them can control your units on the local network. Continue only on a trusted screen."
+      },
+      "credentials_copy": {
+        "title": "Unit credentials",
+        "description": "| Serial | Name | Address | Verified |\n|---|---|---|---|\n{units}\n\nCopy the {format} JSON below and keep it somewhere safe. Submitting closes this page without changes.",
+        "data": {
+          "backup": "Backup JSON"
+        }
+      },
+      "import_credentials": {
+        "title": "Import credentials",
+        "description": "Paste a backup, a hass-kumo kumo_cache.json or a pykumo kumo.cfg. Units are merged into the stored credentials and take effect without a reload.",
+        "data": {
+          "backup": "Backup JSON"
+        }
+      },
+      "import_result": {
+        "title": "Import finished",
+        "description": "- Added: {added}\n- Updated: {updated}\n- Unchanged: {unchanged}\n- Kept the old credentials: {kept}\n- Rejected: {rejected}"
+      },
+      "refresh_from_cloud": {
+        "title": "Refreshing credentials"
+      },
+      "refresh_result": {
+        "title": "Refresh finished",
+        "description": "Fetching credentials from Kumo Cloud is currently broken.\n\n- Refreshed: {refreshed}\n- Missing: {missing}\n- Error: {error}"
+      }
+    },
+    "progress": {
+      "rescan": "Scanning the network for your units. This can take a minute.",
+      "refresh_from_cloud": "Fetching unit credentials from Kumo Cloud. This can take up to a minute."
+    },
+    "error": {
+      "invalid_cidr": "Enter valid CIDRs, each at most a /22.",
+      "invalid_ip": "Enter a valid IP address.",
+      "invalid_backup": "The text is not a valid backup, kumo_cache or kumo.cfg document.",
+      "no_units": "No unit with usable credentials was found."
+    },
+    "abort": {
+      "no_units": "No units with local credentials are stored.",
+      "not_loaded": "The entry must be loaded for this action."
+    }
+  },
+  "selector": {
+    "connection_mode": {
+      "options": {
+        "auto": "Auto (local first, cloud fallback)",
+        "local_only": "Local only",
+        "cloud_only": "Cloud only"
+      }
+    },
+    "target_temp_step": {
+      "options": {
+        "auto": "Automatic (1 for Fahrenheit, 0.5 for Celsius)",
+        "0.5": "0.5 degree",
+        "1.0": "1 degree"
+      }
+    },
+    "fetch_action": {
+      "options": {
+        "retry": "Retry",
+        "continue": "Continue; units without credentials use Kumo Cloud",
+        "abort": "Abort"
+      }
+    },
+    "cn105_codes": {
+      "options": {
+        "3": "0x03 temperatures",
+        "9": "0x09 operating state",
+        "6": "0x06 compressor frequency (may lock the bus)"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "wifi_rssi": {
+        "name": "Wi-Fi signal"
+      },
+      "two_figures_code": {
+        "name": "Error code"
+      },
+      "active_transport": {
+        "name": "Active connection",
+        "state": {
+          "local": "Local",
+          "cloud": "Cloud"
+        }
+      },
+      "link_state": {
+        "name": "Link state",
+        "state": {
+          "no_credentials": "No credentials",
+          "local_ok": "Local OK",
+          "local_degraded": "Local degraded",
+          "cloud_fallback": "Cloud fallback",
+          "auth_stale": "Credentials stale",
+          "address_lost": "Address lost",
+          "recovering": "Recovering",
+          "cloud_only": "Cloud only"
+        }
+      },
+      "sensor_temperature": {
+        "name": "Sensor {index} temperature"
+      },
+      "sensor_battery": {
+        "name": "Sensor {index} battery"
+      },
+      "sensor_rssi": {
+        "name": "Sensor {index} signal"
+      },
+      "cloud_calls_last_hour": {
+        "name": "Cloud calls (last hour)"
+      },
+      "cloud_rate_limit_remaining": {
+        "name": "Cloud rate limit remaining"
+      },
+      "outdoor_temperature": {
+        "name": "Outdoor temperature"
+      },
+      "compressor_runtime": {
+        "name": "Compressor runtime"
+      },
+      "cn105_room_temperature": {
+        "name": "Return air temperature"
+      },
+      "sub_mode": {
+        "name": "Sub mode",
+        "state": {
+          "normal": "Normal",
+          "warmup": "Warm-up",
+          "defrost": "Defrost",
+          "preheat": "Preheat",
+          "standby": "Standby",
+          "off": "Off"
+        }
+      },
+      "fan_stage": {
+        "name": "Fan stage",
+        "state": {
+          "idle": "Idle",
+          "low": "Low",
+          "gentle": "Gentle",
+          "medium": "Medium",
+          "moderate": "Moderate",
+          "high": "High",
+          "diffuse": "Diffuse"
+        }
+      },
+      "compressor_frequency": {
+        "name": "Compressor frequency"
+      }
+    },
+    "number": {
+      "local_temperature_calibration": {
+        "name": "Local temperature calibration"
+      }
+    },
+    "binary_sensor": {
+      "filter_dirty": {
+        "name": "Filter"
+      },
+      "defrost": {
+        "name": "Defrost"
+      },
+      "standby": {
+        "name": "Standby"
+      },
+      "compressor_running": {
+        "name": "Compressor"
+      },
+      "local_reachable": {
+        "name": "Local connection"
+      },
+      "cloud_connected": {
+        "name": "Kumo Cloud connection"
+      }
+    },
+    "button": {
+      "reboot_adapter": {
+        "name": "Reboot adapter"
+      },
+      "refresh_credentials": {
+        "name": "Refresh local credentials"
+      }
+    },
+    "select": {
+      "temperature_source": {
+        "name": "Temperature source",
+        "state": {
+          "sensor0": "Wireless sensor 1",
+          "sensor1": "Wireless sensor 2",
+          "sensor2": "Wireless sensor 3",
+          "sensor3": "Wireless sensor 4",
+          "returnair": "Return air",
+          "remote": "Remote thermostat",
+          "api": "Home Assistant"
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "command_failed": {
+      "message": "The command failed: {error}."
+    },
+    "invalid_command": {
+      "message": "Invalid command: {error}."
+    },
+    "local_unavailable": {
+      "message": "The unit cannot be reached locally and cloud control is not available."
+    },
+    "not_supported_cloud": {
+      "message": "This command is not supported over Kumo Cloud."
+    },
+    "cloud_disabled": {
+      "message": "This command needs Kumo Cloud, which is disabled for this entry."
+    },
+    "cloud_rate_limited": {
+      "message": "Kumo Cloud rate limit reached, try again later."
+    },
+    "cloud_auth_failed": {
+      "message": "Kumo Cloud rejected the login."
+    },
+    "cloud_unavailable": {
+      "message": "Kumo Cloud is unavailable: {error}."
+    },
+    "no_cloud_login": {
+      "message": "This entry needs a Kumo Cloud login."
+    },
+    "update_failed": {
+      "message": "Updating the unit failed: {error}."
+    },
+    "no_credentials": {
+      "message": "No local credentials are stored for this unit."
+    },
+    "unsupported_mode": {
+      "message": "Unsupported mode: {mode}."
+    },
+    "unsupported_fan_mode": {
+      "message": "Unsupported fan mode: {mode}."
+    },
+    "unsupported_swing_mode": {
+      "message": "Unsupported swing mode: {mode}."
+    },
+    "range_required": {
+      "message": "Heat/cool mode needs a low and/or high target temperature."
+    },
+    "no_setpoint_for_mode": {
+      "message": "Mode {mode} has no target temperature."
+    },
+    "refresh_credentials_failed": {
+      "message": "Refreshing local credentials failed: {error}."
+    }
+  },
+  "issues": {
+    "cloud_auth_failed": {
+      "title": "Kumo Cloud login rejected",
+      "description": "Kumo Cloud rejected the login for {title}. Units keep working locally, but cloud fallback and inventory updates are paused. Update the password to restore them."
+    },
+    "local_auth_stale": {
+      "title": "Local credentials stale for {name}",
+      "description": "The stored local credentials for {name} no longer work and no cloud login is configured. Import a fresh credential backup under Options > Credentials > Import."
+    },
+    "remote_temp_source_lost": {
+      "title": "Remote temperature lost for {name}",
+      "description": "The Home Assistant temperature sensor mapped to {name} became unavailable, so the unit went back to its previous temperature source. Feeding resumes and this issue clears once the sensor reports again."
+    }
   }
 }
