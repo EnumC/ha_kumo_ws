@@ -451,7 +451,7 @@ class KumoHub:
             )
             result[serial] = (device, values)
         for serial, (device, values) in result.items():
-            if device.model is not None or not self.ledger.allow(False):
+            if not self.ledger.allow(False):
                 continue
             try:
                 details = await self.rest.get_device(serial)
@@ -459,7 +459,7 @@ class KumoHub:
                 _LOGGER.debug("Device details for %s unavailable: %s", serial, err)
                 continue
             extra = self.codec.decode_device(details)
-            device.model = extra.get("model_number")
+            device.model = extra.get("model_number") or device.model
             result[serial] = (device, {**extra, **values})
         return result
 
@@ -548,6 +548,8 @@ class KumoHub:
             if known is None:
                 await self._async_add_new_device(device, seed)
                 continue
+            if (coordinator := self.coordinators.get(serial)) is not None:
+                coordinator.async_apply_cloud_meta(seed)
             if device.name != known.name or (device.model and device.model != known.model):
                 known.name = device.name
                 known.model = device.model or known.model

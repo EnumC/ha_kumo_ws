@@ -214,6 +214,13 @@ class KumoDeviceCoordinator(DataUpdateCoordinator[DeviceState]):
         return state
 
     @callback
+    def async_apply_cloud_meta(self, values: Mapping[str, Any]) -> None:
+        """Inventory refresh: names, connectivity and error code only."""
+        if meta := _cloud_meta(values):
+            patch = StatePatch(TransportKind.CLOUD, meta, self._clock.now())
+            self._publish(self._merge(patch, self.holds.begin_read()))
+
+    @callback
     def async_handle_push(self, patch: StatePatch) -> None:
         """Apply a socket push; it counts as a read that started now."""
         self.last_update_success = True
