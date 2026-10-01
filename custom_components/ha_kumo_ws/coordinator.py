@@ -55,6 +55,7 @@ _LOGGER = logging.getLogger(__name__)
 LOCAL_LINK_STATES = frozenset({LinkState.LOCAL_OK, LinkState.LOCAL_DEGRADED, LinkState.RECOVERING})
 SLOW_NODE_S = 300.0
 PROFILE_NODE_S = 86400.0
+CLOUD_META_KEYS = frozenset({"name", "model_number", "connected", "error_code", "link_state"})
 
 type CommandBuilder = Callable[[DeviceState], Command]
 
@@ -165,14 +166,18 @@ class KumoDeviceCoordinator(DataUpdateCoordinator[DeviceState]):
         self._sw_version: str | None = None
         initial = DeviceState(device.serial, name=device.name, model_number=device.model)
         if seed:
-            initial = apply_patch(initial, StatePatch(TransportKind.CLOUD, seed, 0.0), None, 0.0)
+            local = hub.local is not None and hub.local.has_unit(self.serial)
+            values = _cloud_meta(seed) if local and link.policy.has_local else seed
+            initial = apply_patch(initial, StatePatch(TransportKind.CLOUD, values, 0.0), None, 0.0)
         self.data = dataclasses.replace(initial, link_state=link.state, updated_at=None)
         self._remove_link_listener = link.add_listener(self._on_link_state)
         self._apply_interval(link.state)
 
     @property
     def device_available(self) -> bool:
-        """False when the unit is known offline or no route can reach it."""
+        """True on a local link; else False when cloud reports it offline or no route exists."""
+        if self.link_is_local:
+            return True
         if self.data.connected is False:
             return False
         state = self.link.state
@@ -195,6 +200,8 @@ class KumoDeviceCoordinator(DataUpdateCoordinator[DeviceState]):
     def _merge(self, patch: StatePatch, since: int, caps_version: int | None = None) -> DeviceState:
         values = dict(patch.values)
         caps = values.pop("capabilities", None)
+        if patch.source is TransportKind.CLOUD and self.link_is_local:
+            values = _cloud_meta(values)
         if isinstance(caps, Capabilities) and (
             caps_version is None or caps_version == self._caps_version
         ):
@@ -517,6 +524,11 @@ def _command_error(err: Exception) -> HomeAssistantError:
         translation_key="command_failed",
         translation_placeholders={"error": type(err).__name__},
     )
+
+
+def _cloud_meta(values: Mapping[str, Any]) -> dict[str, Any]:
+    """Cloud values that do not compete with local state."""
+    return {k: v for k, v in values.items() if k in CLOUD_META_KEYS}
 
 
 def _injection_only(command: Command) -> bool:
