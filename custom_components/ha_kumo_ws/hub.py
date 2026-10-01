@@ -301,7 +301,7 @@ class KumoHub:
             )
             self.cn105_pollers[serial] = poller
             poller.async_start()
-        mapping: Mapping[str, Any] = (self.options[CONF_REMOTE_TEMP] or {}).get(serial) or {}
+        mapping = self.remote_temp_mapping(serial)
         if (entity_id := mapping.get(CONF_RT_ENTITY)) and serial not in self.feeders:
             feeder = RemoteTempFeeder(
                 self.hass,
@@ -313,6 +313,11 @@ class KumoHub:
             )
             self.feeders[serial] = feeder
             feeder.async_start()
+
+    def remote_temp_mapping(self, serial: str) -> Mapping[str, Any]:
+        """Remote temperature options for serial; empty when unmapped."""
+        mapping: Mapping[str, Any] = (self.options[CONF_REMOTE_TEMP] or {}).get(serial) or {}
+        return mapping
 
     def async_create_task[T](self, coro: Coroutine[Any, Any, T], name: str) -> asyncio.Task[T]:
         """Create entry-owned work that is drained before transports close."""

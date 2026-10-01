@@ -62,6 +62,7 @@ class RemoteTempFeeder:
     """Injects the mapped sensor on change (debounced) and on a heartbeat."""
 
     # With manage_source the previous tempSource is restored if the sensor is lost or on unload.
+    # Injection pauses while the unit reports a source other than api (user override).
 
     def __init__(
         self,
@@ -88,6 +89,7 @@ class RemoteTempFeeder:
         self._lost_job = HassJob(self._on_lost, cancel_on_shutdown=True)
         self._previous: TempSource | None = None
         self._managed = False
+        self._paused = False
         self._lost = False
         self._stopping = False
 
@@ -201,13 +203,19 @@ class RemoteTempFeeder:
             celsius = self._value()
             if celsius is None or self._lost or self._stopping or not coordinator.link_is_local:
                 return
+            current = coordinator.data.temp_source
             try:
-                if self._manage_source and not self._managed:
-                    current = coordinator.data.temp_source
+                if self._manage_source and not self._managed and not self._paused:
                     await coordinator.async_execute(SetTempSource(TempSource.API))
                     self._managed = True
                     if current not in (None, TempSource.API, TempSource.UNSET):
                         self._previous = current
+                elif current is not TempSource.API:
+                    self._release()
+                    return
+                elif self._paused:
+                    self._paused = False
+                    self._managed = True
                 await coordinator.async_execute(InjectRoomTemp(celsius))
             except HomeAssistantError as err:
                 _LOGGER.debug("Remote temperature for %s not sent: %s", coordinator.serial, err)
@@ -215,6 +223,9 @@ class RemoteTempFeeder:
     async def _async_restore(self) -> None:
         async with self._lock:
             if not self._managed:
+                return
+            if self._coordinator.data.temp_source is not TempSource.API:
+                self._release()
                 return
             target = self._previous or TempSource.RETURNAIR
             try:
@@ -228,3 +239,9 @@ class RemoteTempFeeder:
                 return
             self._managed = False
             self._previous = None
+
+    def _release(self) -> None:
+        """Another source was chosen: stop managing it until api is reported again."""
+        self._paused = self._manage_source
+        self._managed = False
+        self._previous = None

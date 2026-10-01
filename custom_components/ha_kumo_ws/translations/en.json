@@ -450,12 +450,20 @@
           "sensor3": "Wireless sensor 4",
           "returnair": "Return air",
           "remote": "Remote thermostat",
-          "api": "Home Assistant"
+          "api": "Home Assistant sensor",
+          "api_setup_required": "Home Assistant sensor (set up in options first)",
+          "unset": "Unset"
         }
       }
     }
   },
   "exceptions": {
+    "temp_source_not_settable": {
+      "message": "Unset cannot be selected as the temperature source."
+    },
+    "api_setup_required": {
+      "message": "Set up a remote temperature sensor for this unit first: Settings > Devices & services > Mitsubishi Comfort (WS) > Configure > Remote temperature sensor."
+    },
     "command_failed": {
       "message": "The command failed: {error}."
     },
