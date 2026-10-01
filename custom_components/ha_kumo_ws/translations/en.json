@@ -343,6 +343,19 @@
           "cloud_only": "Cloud only"
         }
       },
+      "active_thermistor": {
+        "name": "Active thermistor",
+        "state": {
+          "sensor0": "Wireless sensor 1",
+          "sensor1": "Wireless sensor 2",
+          "sensor2": "Wireless sensor 3",
+          "sensor3": "Wireless sensor 4",
+          "returnair": "Return air",
+          "remote": "Remote thermostat",
+          "api": "Home Assistant",
+          "unset": "Unset"
+        }
+      },
       "sensor_temperature": {
         "name": "Sensor {index} temperature"
       },

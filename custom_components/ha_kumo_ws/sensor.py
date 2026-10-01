@@ -25,9 +25,9 @@ from homeassistant.helpers.typing import StateType
 
 from .const import new_device_signal
 from .coordinator import KumoDeviceCoordinator
-from .entity import KumoEntity, KumoHubEntity
+from .entity import KumoEntity, KumoHubEntity, KumoLocalEntity
 from .hub import KumoConfigEntry, KumoHub
-from .pykumo2.domain.enums import LinkState
+from .pykumo2.domain.enums import LinkState, TempSource
 from .pykumo2.domain.state import Cn105Telemetry, WirelessSensor
 from .pykumo2.local.cn105 import STAGE_NAMES, SUB_MODE_NAMES
 from .pykumo2.transport import TransportKind
@@ -43,6 +43,7 @@ class KumoSensorDescription(SensorEntityDescription):
     value_fn: Callable[[KumoDeviceCoordinator], StateType]
     dynamic: bool = False
     local_only: bool = False
+    local_link: bool = False
     cn105_code: int | None = None
 
 
@@ -63,6 +64,11 @@ def _active_transport(c: KumoDeviceCoordinator) -> StateType:
 
 def _link_state(c: KumoDeviceCoordinator) -> StateType:
     return c.link.state.value
+
+
+def _active_thermistor(c: KumoDeviceCoordinator) -> StateType:
+    source = c.data.active_thermistor
+    return None if source is None else source.value
 
 
 SUB_MODES = [name.lower() for name in SUB_MODE_NAMES.values()]
@@ -117,6 +123,16 @@ UNIT_SENSORS: tuple[KumoSensorDescription, ...] = (
         options=[state.value for state in LinkState],
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=_link_state,
+    ),
+    KumoSensorDescription(
+        key="active_thermistor",
+        translation_key="active_thermistor",
+        device_class=SensorDeviceClass.ENUM,
+        options=[source.value for source in TempSource],
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_active_thermistor,
+        local_only=True,
+        local_link=True,
     ),
     KumoSensorDescription(
         key="outdoor_temperature",
@@ -265,7 +281,8 @@ async def async_setup_entry(
                 if description.dynamic and description.value_fn(coordinator) is None:
                     continue
                 added.add(description.key)
-                new.append(KumoSensor(coordinator, description))
+                cls = KumoLocalSensor if description.local_link else KumoSensor
+                new.append(cls(coordinator, description))
             for sensor in coordinator.data.sensors:
                 if not sensor.uuid or f"sensor_{sensor.uuid}" in added:
                     continue
@@ -306,6 +323,10 @@ class KumoSensor(KumoEntity, SensorEntity):
     @property
     def native_value(self) -> StateType:
         return self.entity_description.value_fn(self.coordinator)
+
+
+class KumoLocalSensor(KumoLocalEntity, KumoSensor):
+    """Unit sensor that is only available on a local link."""
 
 
 class KumoWirelessSensor(KumoEntity, SensorEntity):
