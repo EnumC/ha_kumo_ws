@@ -614,7 +614,7 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
         if legacy.has_account:
             schema[vol.Required(CONF_USE_ACCOUNT, default=True)] = BooleanSelector()
         if legacy.entry is not None:
-            schema[vol.Required(CONF_DISABLE_SOURCE, default=False)] = BooleanSelector()
+            schema[vol.Required(CONF_DISABLE_SOURCE, default=True)] = BooleanSelector()
         entry = "-"
         if legacy.entry is not None:
             entry = legacy.entry.title
