@@ -5,14 +5,20 @@
     "@EnumC"
   ],
   "config_flow": true,
+  "dependencies": [
+    "network"
+  ],
+  "dhcp": [
+    {
+      "registered_devices": true
+    }
+  ],
   "documentation": "https://github.com/EnumC/ha_kumo_ws",
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/EnumC/ha_kumo_ws/issues",
   "requirements": [
     "httpx[http2]>=0.27.0",
-    "python-socketio[client]>=5.11.0",
-    "pydantic>=2.6.0",
-    "aiohttp>=3.9.0"
+    "python-socketio[client]>=5.11.0"
   ],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

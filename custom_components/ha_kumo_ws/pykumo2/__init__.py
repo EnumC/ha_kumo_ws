@@ -1,29 +1,96 @@
-"""Python helper for Mitsubishi Comfort (Kumo Cloud) devices."""
+"""HA-agnostic Kumo library: local signed API, Kumo Cloud and per-device routing."""
 
-from .client import MitsubishiComfortClient
-from .const import (
-    APP_VERSION,
-    BASE_URL,
-    DEFAULT_FORCE_REQUESTS,
-    DEFAULT_HEADERS,
-    SOCKET_URL,
-    USER_AGENT,
+from .clock import Clock, SystemClock
+from .domain.capabilities import Capabilities, SetpointLimits, SetpointRange
+from .domain.commands import (
+    Batch,
+    Command,
+    CommandValidator,
+    InjectRoomTemp,
+    RebootAdapter,
+    SetFanSpeed,
+    SetMode,
+    SetPower,
+    SetRoomTempOffset,
+    SetSetpoints,
+    SetTempSource,
+    SetVane,
+    optimistic_values,
 )
-from .errors import AuthenticationError, MitsubishiComfortError
-from .models import DeviceState, TokenInfo
-from .socket import SocketUpdateManager
+from .domain.enums import (
+    ConnectionMode,
+    FanSpeed,
+    HvacMode,
+    LinkState,
+    SetupMethod,
+    TempSource,
+    VaneDirection,
+)
+from .domain.holds import HoldTable
+from .domain.state import Cn105Telemetry, DeviceState, StatePatch, WirelessSensor, apply_patch
+from .errors import (
+    AuthenticationError,
+    CloudError,
+    CommandNotSupportedError,
+    CredentialsMissingError,
+    KumoError,
+    LocalAuthError,
+    LocalBusyError,
+    LocalConnectionError,
+    LocalError,
+    LocalProtocolError,
+    LocalTimeoutError,
+    RateLimitedError,
+)
+from .transport import LeaseReason, Node, PushTransport, Transport, TransportKind
 
 __all__ = [
-    "APP_VERSION",
     "AuthenticationError",
-    "BASE_URL",
-    "DEFAULT_FORCE_REQUESTS",
-    "DEFAULT_HEADERS",
+    "Batch",
+    "Capabilities",
+    "Clock",
+    "CloudError",
+    "Cn105Telemetry",
+    "Command",
+    "CommandNotSupportedError",
+    "CommandValidator",
+    "ConnectionMode",
+    "CredentialsMissingError",
     "DeviceState",
-    "MitsubishiComfortClient",
-    "MitsubishiComfortError",
-    "SocketUpdateManager",
-    "SOCKET_URL",
-    "TokenInfo",
-    "USER_AGENT",
+    "FanSpeed",
+    "HoldTable",
+    "HvacMode",
+    "InjectRoomTemp",
+    "KumoError",
+    "LeaseReason",
+    "LinkState",
+    "LocalAuthError",
+    "LocalBusyError",
+    "LocalConnectionError",
+    "LocalError",
+    "LocalProtocolError",
+    "LocalTimeoutError",
+    "Node",
+    "PushTransport",
+    "RateLimitedError",
+    "RebootAdapter",
+    "SetFanSpeed",
+    "SetMode",
+    "SetPower",
+    "SetRoomTempOffset",
+    "SetSetpoints",
+    "SetTempSource",
+    "SetVane",
+    "SetpointLimits",
+    "SetpointRange",
+    "SetupMethod",
+    "StatePatch",
+    "SystemClock",
+    "TempSource",
+    "Transport",
+    "TransportKind",
+    "VaneDirection",
+    "WirelessSensor",
+    "apply_patch",
+    "optimistic_values",
 ]

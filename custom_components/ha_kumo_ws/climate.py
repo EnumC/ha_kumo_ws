@@ -1,386 +1,293 @@
-"""Climate platform for Mitsubishi Comfort."""
+"""Climate platform: one entity per indoor unit, driven by Capabilities."""
 
-from __future__ import annotations
-
-import logging
 from typing import Any
 
-from homeassistant.components.climate import (
+from homeassistant.components.climate import ClimateEntity
+from homeassistant.components.climate.const import (
     ATTR_HVAC_MODE,
     ATTR_TARGET_TEMP_HIGH,
     ATTR_TARGET_TEMP_LOW,
-    ClimateEntity,
     ClimateEntityFeature,
     HVACAction,
     HVACMode,
 )
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers.event import async_call_later
+from homeassistant.const import ATTR_TEMPERATURE, PRECISION_WHOLE, UnitOfTemperature
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .pykumo2 import MitsubishiComfortClient
+from .cn105_task import fresh_telemetry
+from .const import CONF_TARGET_TEMP_STEP, DOMAIN, new_device_signal
+from .coordinator import KumoDeviceCoordinator
+from .entity import KumoEntity
+from .hub import KumoConfigEntry
+from .pykumo2.domain.capabilities import SetpointRange
+from .pykumo2.domain.commands import (
+    Batch,
+    Command,
+    SetFanSpeed,
+    SetMode,
+    SetPower,
+    SetSetpoints,
+    SetVane,
+)
+from .pykumo2.domain.enums import FanSpeed, HvacMode, VaneDirection
+from .pykumo2.domain.state import Cn105Telemetry, DeviceState
 
-from .const import DOMAIN
-from .coordinator import MitsubishiComfortCoordinator
+PARALLEL_UPDATES = 0
 
-_LOGGER = logging.getLogger(__name__)
-
-HVAC_TO_API = {
-    HVACMode.OFF: "off",
-    HVACMode.HEAT: "heat",
-    HVACMode.COOL: "cool",
-    HVACMode.HEAT_COOL: "auto",
-    HVACMode.DRY: "dry",
-    HVACMode.FAN_ONLY: "vent",
+TO_HA: dict[HvacMode, HVACMode] = {
+    HvacMode.HEAT: HVACMode.HEAT,
+    HvacMode.COOL: HVACMode.COOL,
+    HvacMode.AUTO: HVACMode.HEAT_COOL,
+    HvacMode.DRY: HVACMode.DRY,
+    HvacMode.VENT: HVACMode.FAN_ONLY,
 }
-
-API_TO_HVAC = {
-    "off": HVACMode.OFF,
-    "heat": HVACMode.HEAT,
-    "cool": HVACMode.COOL,
-    "auto": HVACMode.HEAT_COOL,
-    "autoHeat": HVACMode.HEAT_COOL,
-    "autoCool": HVACMode.HEAT_COOL,
-    "dry": HVACMode.DRY,
-    "vent": HVACMode.FAN_ONLY,
+FROM_HA: dict[HVACMode, HvacMode] = {ha: mode for mode, ha in TO_HA.items()}
+_ACTIONS = {
+    HvacMode.HEAT: HVACAction.HEATING,
+    HvacMode.COOL: HVACAction.COOLING,
+    HvacMode.DRY: HVACAction.DRYING,
+    HvacMode.VENT: HVACAction.FAN,
 }
+_AUTO_SUB_MODES = {"AUTO_COOL": HvacMode.COOL, "AUTO_HEAT": HvacMode.HEAT}
 
-RANGE_HVAC_MODES = {HVACMode.HEAT_COOL, HVACMode.AUTO}
 
-FAN_MODES = ["superQuiet", "quiet", "low", "powerful", "superPowerful", "auto"]
-SWING_MODES = [
-    "auto",
-    "horizontal",
-    "midhorizontal",
-    "midpoint",
-    "midvertical",
-    "vertical",
-    "swing",
-]
+def _cn105_action(state: DeviceState, telemetry: Cn105Telemetry) -> HVACAction | None:
+    """Action from fresh CN105 telemetry; None falls back to the status heuristic."""
+    sub_mode = telemetry.sub_mode
+    if sub_mode == "DEFROST":
+        return HVACAction.DEFROSTING
+    if state.mode is HvacMode.VENT:
+        return HVACAction.FAN
+    if sub_mode in ("PREHEAT", "WARMUP"):
+        return HVACAction.PREHEATING
+    if sub_mode in ("STANDBY", "OFF") or telemetry.operating is False:
+        return HVACAction.IDLE
+    if not telemetry.operating:
+        return None
+    mode: HvacMode | None = state.mode
+    if mode is HvacMode.AUTO:
+        mode = state.auto_active or _AUTO_SUB_MODES.get(telemetry.auto_sub_mode or "")
+    return None if mode is None else _ACTIONS.get(mode)
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: KumoConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up climate entities from a config entry."""
-    stored = hass.data[DOMAIN][entry.entry_id]
-    coordinator: MitsubishiComfortCoordinator = stored["coordinator"]
-    async_add_entities(
-        MitsubishiComfortClimateEntity(
-            coordinator=coordinator,
-            client=stored["client"],
-            serial=serial,
-        )
-        for serial in coordinator.data
+    """Add one climate entity per unit, and for units found later."""
+    hub = entry.runtime_data
+    async_add_entities(KumoClimate(c) for c in hub.coordinators.values())
+
+    @callback
+    def _add(serial: str) -> None:
+        async_add_entities([KumoClimate(hub.coordinators[serial])])
+
+    entry.async_on_unload(async_dispatcher_connect(hass, new_device_signal(entry.entry_id), _add))
+
+
+def _invalid(key: str, **placeholders: str) -> ServiceValidationError:
+    return ServiceValidationError(
+        translation_domain=DOMAIN, translation_key=key, translation_placeholders=placeholders
     )
 
 
-class MitsubishiComfortClimateEntity(CoordinatorEntity[MitsubishiComfortCoordinator], ClimateEntity):
-    """Representation of a Mitsubishi Comfort indoor unit."""
+def _mode_command(mode: HVACMode) -> Command:
+    if mode == HVACMode.OFF:
+        return SetPower(False)
+    if (target := FROM_HA.get(mode)) is None:
+        raise _invalid("unsupported_mode", mode=str(mode))
+    return SetMode(target)
 
-    _attr_should_poll = False
+
+def _setpoints(
+    mode: HvacMode | None, temp: float | None, low: float | None, high: float | None
+) -> SetSetpoints:
+    """Setpoint command for mode; never carries a value for the wrong side."""
+    if mode is HvacMode.AUTO:
+        if low is None and high is None:
+            raise _invalid("range_required")
+        return SetSetpoints(heat=low, cool=high)
+    if mode is HvacMode.HEAT and (heat := low if temp is None else temp) is not None:
+        return SetSetpoints(heat=heat)
+    cool = high if temp is None else temp
+    if mode in (HvacMode.COOL, HvacMode.DRY) and cool is not None:
+        return SetSetpoints(cool=cool)
+    raise _invalid("no_setpoint_for_mode", mode=str(mode))
+
+
+class KumoClimate(KumoEntity, ClimateEntity):
+    """Indoor unit; every write goes through the coordinator command queue."""
+
+    _attr_name = None
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    _attr_hvac_modes = [
-        HVACMode.OFF,
-        HVACMode.HEAT,
-        HVACMode.COOL,
-        HVACMode.HEAT_COOL,
-        HVACMode.DRY,
-        HVACMode.FAN_ONLY,
-    ]
-    _attr_target_temperature_low = None
-    _attr_target_temperature_high = None
-    _attr_min_temp = 10.0
-    _attr_max_temp = 32.0
-    _attr_target_temperature_step = 0.5
-    _attr_fan_modes = FAN_MODES
-    _attr_swing_modes = SWING_MODES
 
-    def __init__(
-        self,
-        coordinator: MitsubishiComfortCoordinator,
-        client: MitsubishiComfortClient,
-        serial: str,
-    ) -> None:
+    def __init__(self, coordinator: KumoDeviceCoordinator) -> None:
         super().__init__(coordinator)
-        self._client = client
-        self._serial = serial
-        device = coordinator.data.get(serial)
-        name = device.name if device else serial
-        self._attr_unique_id = f"mitsubishi_comfort_{serial}"
-        self._attr_name = name
+        fahrenheit = coordinator.hass.config.units.temperature_unit == UnitOfTemperature.FAHRENHEIT
+        option = coordinator.config_entry.options.get(CONF_TARGET_TEMP_STEP, "auto")
+        whole = option == "1.0" or (option == "auto" and fahrenheit)
+        self._attr_target_temperature_step = 1.0 if whole else 0.5
+        if whole and fahrenheit:
+            self._attr_precision = PRECISION_WHOLE
 
     @property
-    def device(self):
-        return self.coordinator.data.get(self._serial)
+    def _modes(self) -> frozenset[HvacMode]:
+        return self.coordinator.capabilities.hvac_modes
 
     @property
-    def available(self) -> bool:
-        device = self.device
-        return device.connected if device else False
-
-    @property
-    def hvac_action(self) -> HVACAction | None:
-        device = self.device
-        if not device or not device.power:
-            return HVACAction.OFF
-        if device.display_config:
-            if device.display_config.get("defrost"):
-                return HVACAction.DEFROSTING
-            if device.display_config.get("standby"):
-                return HVACAction.IDLE
-        if device.operation_mode in ("cool", "autoCool"):
-            return HVACAction.COOLING
-        if device.operation_mode in ("heat", "autoHeat"):
-            return HVACAction.HEATING
-        if device.operation_mode == "dry":
-            return HVACAction.DRYING
-        if device.operation_mode == "vent":
-            return HVACAction.FAN
-        return HVACAction.IDLE
-
-    @property
-    def current_temperature(self) -> float | None:
-        device = self.device
-        return device.room_temp if device else None
-
-    @property
-    def target_temperature(self) -> float | None:
-        device = self.device
-        if self.hvac_mode in RANGE_HVAC_MODES:
-            return None
-        return device.target_temperature() if device else None
-
-    @property
-    def target_temperature_low(self) -> float | None:
-        if self.hvac_mode not in RANGE_HVAC_MODES:
-            return None
-        device = self.device
-        return device.sp_heat if device else None
-
-    @property
-    def target_temperature_high(self) -> float | None:
-        if self.hvac_mode not in RANGE_HVAC_MODES:
-            return None
-        device = self.device
-        return device.sp_cool if device else None
+    def hvac_modes(self) -> list[HVACMode]:
+        return [HVACMode.OFF, *(ha for mode, ha in TO_HA.items() if mode in self._modes)]
 
     @property
     def hvac_mode(self) -> HVACMode | None:
-        device = self.device
-        if not device:
-            return None
-        if not device.power:
+        mode = self.state_data.effective_mode
+        if mode is HvacMode.OFF:
             return HVACMode.OFF
-        return API_TO_HVAC.get(device.operation_mode, None)
+        return None if mode is None else TO_HA.get(mode)
+
+    @property
+    def hvac_action(self) -> HVACAction | None:
+        state = self.state_data
+        if state.power is None:
+            return None
+        if not state.power:
+            return HVACAction.OFF
+        if state.defrost:
+            return HVACAction.DEFROSTING
+        telemetry = fresh_telemetry(self.coordinator)
+        if telemetry is not None and (action := _cn105_action(state, telemetry)) is not None:
+            return action
+        if state.standby:
+            return HVACAction.IDLE
+        if state.mode is HvacMode.AUTO:
+            return _ACTIONS.get(state.auto_active, HVACAction.IDLE) if state.auto_active else None
+        return None if state.mode is None else _ACTIONS.get(state.mode)
+
+    @property
+    def supported_features(self) -> ClimateEntityFeature:
+        caps = self.coordinator.capabilities
+        features = ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
+        if caps.hvac_modes & {HvacMode.HEAT, HvacMode.COOL, HvacMode.DRY}:
+            features |= ClimateEntityFeature.TARGET_TEMPERATURE
+        if HvacMode.AUTO in caps.hvac_modes:
+            features |= ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
+        if caps.fan_speeds:
+            features |= ClimateEntityFeature.FAN_MODE
+        if caps.vane_directions:
+            features |= ClimateEntityFeature.SWING_MODE
+        return features
+
+    @property
+    def current_temperature(self) -> float | None:
+        return self.state_data.room_temp
+
+    @property
+    def current_humidity(self) -> float | None:
+        return self.state_data.effective_humidity
+
+    @property
+    def target_temperature(self) -> float | None:
+        state = self.state_data
+        if state.mode is HvacMode.HEAT:
+            return state.sp_heat
+        if state.mode is HvacMode.COOL or (
+            state.mode is HvacMode.DRY and self.coordinator.capabilities.uses_setpoint_in_dry
+        ):
+            return state.sp_cool
+        return None
+
+    @property
+    def target_temperature_low(self) -> float | None:
+        state = self.state_data
+        return state.sp_heat if state.mode is HvacMode.AUTO else None
+
+    @property
+    def target_temperature_high(self) -> float | None:
+        state = self.state_data
+        return state.sp_cool if state.mode is HvacMode.AUTO else None
+
+    def _range(self) -> SetpointRange:
+        caps, mode = self.coordinator.capabilities, self.state_data.mode
+        if mode is HvacMode.HEAT:
+            return caps.heat_range(mode)
+        if mode in (HvacMode.COOL, HvacMode.DRY):
+            return caps.cool_range(mode)
+        if mode is HvacMode.AUTO:
+            return SetpointRange(caps.heat_range(mode).low, caps.cool_range(mode).high)
+        limits = caps.setpoints
+        ranges = (limits.heat, limits.cool, limits.auto)
+        return SetpointRange(min(r.low for r in ranges), max(r.high for r in ranges))
+
+    @property
+    def min_temp(self) -> float:
+        return self._range().low
+
+    @property
+    def max_temp(self) -> float:
+        return self._range().high
+
+    @property
+    def fan_modes(self) -> list[str]:
+        return [speed.value for speed in self.coordinator.capabilities.fan_speeds]
 
     @property
     def fan_mode(self) -> str | None:
-        device = self.device
-        if device and device.fan_speed in FAN_MODES:
-            return device.fan_speed
-        return "auto"
+        speed = self.state_data.fan_speed
+        return None if speed is None else speed.value
 
     @property
-    def supported_features(self) -> int:
-        return (
-            ClimateEntityFeature.FAN_MODE
-            | ClimateEntityFeature.SWING_MODE
-            | ClimateEntityFeature.TARGET_TEMPERATURE
-            | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
-            | ClimateEntityFeature.TURN_ON
-            | ClimateEntityFeature.TURN_OFF
-        )
+    def swing_modes(self) -> list[str]:
+        return [vane.value for vane in self.coordinator.capabilities.vane_directions]
 
     @property
     def swing_mode(self) -> str | None:
-        device = self.device
-        if device and device.air_direction in SWING_MODES:
-            return device.air_direction
-        return "auto"
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        device = self.device
-        if not device:
-            return {}
-        return {
-            "serial": device.serial,
-            "serial_number": device.serial_number,
-            "humidity": device.humidity,
-            "sp_cool": device.sp_cool,
-            "sp_heat": device.sp_heat,
-            "schedule_owner": device.schedule_owner,
-            "rssi": device.rssi,
-            "two_figures_code": device.two_figures_code,
-            "defrost": device.display_config.get("defrost") if device.display_config else None,
-            "standby": device.display_config.get("standby") if device.display_config else None,
-        }
-
-    @property
-    def device_info(self) -> dict[str, Any] | None:
-        device = self.device
-        if not device:
-            return None
-        return {
-            "identifiers": {(DOMAIN, device.serial)},
-            "name": device.name,
-            "manufacturer": "Mitsubishi Electric",
-            "model": device.model_number or device.raw.get("modelNumber"),
-            "serial_number": device.serial_number or device.serial,
-        }
-
-    async def async_set_temperature(self, **kwargs: Any) -> None:
-        """Set target temperature (Celsius) and optionally HVAC mode."""
-        temperature = kwargs.get(ATTR_TEMPERATURE)
-        temp_low = kwargs.get(ATTR_TARGET_TEMP_LOW)
-        temp_high = kwargs.get(ATTR_TARGET_TEMP_HIGH)
-        hvac_mode = kwargs.get(ATTR_HVAC_MODE)
-        if temperature is None and temp_low is None and temp_high is None:
-            return
-
-        device = self.device
-        if hvac_mode is None:
-            # use existing mode
-            hvac_mode = self.hvac_mode
-
-        api_mode = HVAC_TO_API.get(hvac_mode or (device.operation_mode if device else None))
-        commands: dict[str, Any] = {"power": 1}
-
-        if api_mode == "cool":
-            commands["spCool"] = temperature
-            commands["operationMode"] = "cool"
-        elif api_mode == "heat":
-            commands["spHeat"] = temperature
-            commands["operationMode"] = "heat"
-        elif api_mode == "auto" or api_mode == "autoHeat" or api_mode == "autoCool":
-            if temp_high is not None:
-                commands["spCool"] = temp_high
-            if temp_low is not None:
-                commands["spHeat"] = temp_low
-            commands["operationMode"] = "auto"
-        elif api_mode == "dry":
-            commands["operationMode"] = "dry"
-        elif api_mode == "vent":
-            commands["operationMode"] = "vent"
-        else:
-            _LOGGER.warning("Unsupported HVAC mode: %s", hvac_mode)
-            return
-
-        await self._client.async_send_command(self._serial, commands)
-
-        # Optimistically update in-memory state to avoid UI flicker
-        if device:
-            if "spCool" in commands:
-                device.sp_cool = commands["spCool"]
-            if "spHeat" in commands:
-                device.sp_heat = commands["spHeat"]
-            if "operationMode" in commands:
-                device.operation_mode = commands["operationMode"]
-            device.power = True
-            self.coordinator.async_set_updated_data(dict(self.coordinator.data))
-
-        # Protect setpoints/mode from stale socket updates for a short window
-        self.coordinator.register_command_hold(
-            self._serial,
-            {"spCool", "spHeat", "operationMode", "power"},
-            duration=10.0,
-        )
+        vane = self.state_data.vane
+        return None if vane is None else vane.value
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        api_mode = HVAC_TO_API[hvac_mode]
-        commands = {"operationMode": api_mode, "power": 0 if hvac_mode == HVACMode.OFF else 1}
-        await self._client.async_send_command(self._serial, commands)
-        device = self.device
-        if device:
-            device.operation_mode = api_mode
-            device.power = commands["power"] == 1
-            self.coordinator.async_set_updated_data(dict(self.coordinator.data))
-        self.coordinator.register_command_hold(
-            self._serial,
-            {"operationMode", "power"},
-            duration=10.0,
-        )
+        await self.coordinator.async_execute(_mode_command(hvac_mode))
 
     async def async_turn_on(self) -> None:
-        device = self.device
-        commands = {"power": 1}
-        hvac_mode = None
-        if device and device.operation_mode:
-            hvac_mode = API_TO_HVAC.get(device.operation_mode)
-        if hvac_mode is None or hvac_mode == HVACMode.OFF:
-            hvac_mode = HVACMode.HEAT
-        commands["operationMode"] = HVAC_TO_API[hvac_mode]
-        await self._client.async_send_command(self._serial, commands)
-        if device:
-            device.power = True
-            device.operation_mode = commands["operationMode"]
-            self.coordinator.async_set_updated_data(dict(self.coordinator.data))
-        self.coordinator.register_command_hold(
-            self._serial,
-            {"operationMode", "power"},
-            duration=10.0,
-        )
+        """Power on in the last mode."""
+        await self.coordinator.async_execute(SetPower(True))
 
     async def async_turn_off(self) -> None:
-        await self._client.async_send_command(self._serial, {"power": 0})
-        device = self.device
-        if device:
-            device.power = False
-            self.coordinator.async_set_updated_data(dict(self.coordinator.data))
-        self.coordinator.register_command_hold(
-            self._serial,
-            {"power"},
-            duration=10.0,
-        )
+        await self.coordinator.async_execute(SetPower(False))
 
-    async def async_toggle(self) -> None:
-        device = self.device
-        if device and device.power:
-            await self.async_turn_off()
-        else:
-            await self.async_turn_on()
+    async def async_set_temperature(self, **kwargs: Any) -> None:
+        """Setpoints for the target (or current) mode; a mode change goes first."""
+        temp = kwargs.get(ATTR_TEMPERATURE)
+        low = kwargs.get(ATTR_TARGET_TEMP_LOW)
+        high = kwargs.get(ATTR_TARGET_TEMP_HIGH)
+        hvac_mode: HVACMode | None = kwargs.get(ATTR_HVAC_MODE)
+        if temp is None and low is None and high is None:
+            if hvac_mode is not None:
+                await self.async_set_hvac_mode(hvac_mode)
+            return
+        if hvac_mode is None:
+            await self.coordinator.async_execute(
+                lambda state: _setpoints(state.mode, temp, low, high),
+                coalesce="set_temperature",
+            )
+            return
+        mode_cmd = _mode_command(hvac_mode)
+
+        def build(state: DeviceState) -> Command:
+            target = state.mode if hvac_mode == HVACMode.OFF else FROM_HA[hvac_mode]
+            return Batch((mode_cmd, _setpoints(target, temp, low, high)))
+
+        await self.coordinator.async_execute(build)
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
-        if not fan_mode:
-            _LOGGER.warning("Ignoring invalid fan mode request: %s", fan_mode)
-            return
-        fan_mode = fan_mode if fan_mode in FAN_MODES else fan_mode.lower()
-        if fan_mode not in FAN_MODES:
-            _LOGGER.warning("Ignoring invalid fan mode request: %s", fan_mode)
-            return
-        await self._client.async_send_command(self._serial, {"fanSpeed": fan_mode})
-        # Optimistic update to avoid snap-back while waiting for socket
-        device = self.device
-        if device:
-            device.fan_speed = fan_mode
-            self.coordinator.async_set_updated_data(dict(self.coordinator.data))
-        self.coordinator.register_command_hold(
-            self._serial,
-            {"fanSpeed"},
-            duration=10.0,
-        )
+        if (speed := FanSpeed.parse(fan_mode)) is None:
+            raise _invalid("unsupported_fan_mode", mode=fan_mode)
+        await self.coordinator.async_execute(SetFanSpeed(speed))
 
     async def async_set_swing_mode(self, swing_mode: str) -> None:
-        if not swing_mode:
-            _LOGGER.warning("Ignoring invalid swing mode request: %s", swing_mode)
-            return
-        swing_mode = swing_mode if swing_mode in SWING_MODES else swing_mode.lower()
-        if swing_mode not in SWING_MODES:
-            _LOGGER.warning("Ignoring invalid swing mode request: %s", swing_mode)
-            return
-        await self._client.async_send_command(self._serial, {"airDirection": swing_mode})
-        device = self.device
-        if device:
-            device.air_direction = swing_mode
-            self.coordinator.async_set_updated_data(dict(self.coordinator.data))
-        self.coordinator.register_command_hold(
-            self._serial,
-            {"airDirection"},
-            duration=10.0,
-        )
+        if (vane := VaneDirection.parse(swing_mode)) is None:
+            raise _invalid("unsupported_swing_mode", mode=swing_mode)
+        await self.coordinator.async_execute(SetVane(vane))
