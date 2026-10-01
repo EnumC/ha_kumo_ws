@@ -760,13 +760,18 @@ class KumoOptionsFlow(OptionsFlowWithReload):
             )
         return self._service
 
-    async def _async_unit_options(self) -> list[SelectOptionDict]:
+    async def _async_unit_labels(self) -> dict[str, str]:
+        """Serial to "Name (serial)", sorted by serial."""
         service = await self._async_credentials()
-        options = []
+        labels = {}
         for serial, unit in sorted(service.all().items()):
             name = service.meta(serial).get("name") or unit.label or serial
-            options.append(SelectOptionDict(value=serial, label=f"{name} ({serial})"))
-        return options
+            labels[serial] = serial if name == serial else f"{name} ({serial})"
+        return labels
+
+    async def _async_unit_options(self) -> list[SelectOptionDict]:
+        labels = await self._async_unit_labels()
+        return [SelectOptionDict(value=serial, label=label) for serial, label in labels.items()]
 
     def _finish_unchanged(self) -> ConfigFlowResult:
         """End without touching options, so the entry is not reloaded."""
@@ -983,16 +988,17 @@ class KumoOptionsFlow(OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Pick a unit to map a Home Assistant temperature sensor to."""
-        units = await self._async_unit_options()
-        if not units:
+        labels = await self._async_unit_labels()
+        if not labels:
             return self.async_abort(reason="no_units")
         if user_input is not None:
             self._serial = user_input[CONF_UNIT]
             return await self.async_step_remote_temp_unit()
         mapped = [
-            f"{serial} = {value.get(CONF_RT_ENTITY)}"
+            f"{labels.get(serial, serial)} = {value.get(CONF_RT_ENTITY)}"
             for serial, value in sorted(self._current()[CONF_REMOTE_TEMP].items())
         ]
+        units = [SelectOptionDict(value=serial, label=label) for serial, label in labels.items()]
         return self.async_show_form(
             step_id="remote_temp",
             data_schema=vol.Schema(
@@ -1018,6 +1024,7 @@ class KumoOptionsFlow(OptionsFlowWithReload):
                 mapping.pop(self._serial, None)
             return self.async_create_entry(data={**current, CONF_REMOTE_TEMP: mapping})
         existing = mapping.get(self._serial, {})
+        labels = await self._async_unit_labels()
         schema = vol.Schema(
             {
                 vol.Optional(CONF_RT_ENTITY): EntitySelector(
@@ -1037,7 +1044,7 @@ class KumoOptionsFlow(OptionsFlowWithReload):
         return self.async_show_form(
             step_id="remote_temp_unit",
             data_schema=self.add_suggested_values_to_schema(schema, suggested),
-            description_placeholders={"unit": self._serial},
+            description_placeholders={"unit": labels.get(self._serial, self._serial)},
         )
 
     # No update listener or reload here; the hub hot-reloads credentials itself.
