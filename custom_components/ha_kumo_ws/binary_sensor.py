@@ -12,6 +12,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .const import CN105_ENTITY_CODES
 from .coordinator import KumoDeviceCoordinator
 from .entity import KumoEntity, async_setup_units
 from .hub import KumoConfigEntry
@@ -27,7 +28,6 @@ class KumoBinarySensorDescription(BinarySensorEntityDescription):
     local_only: bool = False
     cloud_only: bool = False
     always_available: bool = False
-    cn105: bool = False
 
 
 BINARY_SENSORS: tuple[KumoBinarySensorDescription, ...] = (
@@ -53,7 +53,6 @@ BINARY_SENSORS: tuple[KumoBinarySensorDescription, ...] = (
         device_class=BinarySensorDeviceClass.RUNNING,
         is_on_fn=lambda c: None if c.data.cn105 is None else c.data.cn105.operating,
         local_only=True,
-        cn105=True,
     ),
     KumoBinarySensorDescription(
         key="local_reachable",
@@ -88,7 +87,7 @@ async def async_setup_entry(
         for d in BINARY_SENSORS
         if (hub.local_capable or not d.local_only)
         and (hub.has_cloud or not d.cloud_only)
-        and (hub.cn105_enabled or not d.cn105)
+        and (d.key not in CN105_ENTITY_CODES or hub.cn105_provides(d.key))
     ]
     async_setup_units(
         hass,

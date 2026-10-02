@@ -40,15 +40,15 @@ DEFAULT_CN105_CODES: Final = [3, 9]
 DEFAULT_CN105_INTERVAL: Final = 90
 MIN_CN105_INTERVAL: Final = 75
 CN105_CODES: Final = (3, 9, 6)
-CN105_ENTITY_KEYS: Final = (
-    "outdoor_temperature",
-    "compressor_runtime",
-    "cn105_room_temperature",
-    "sub_mode",
-    "fan_stage",
-    "compressor_frequency",
-    "compressor_running",
-)
+CN105_ENTITY_CODES: Final[dict[str, frozenset[int]]] = {
+    "outdoor_temperature": frozenset({3}),
+    "compressor_runtime": frozenset({3}),
+    "cn105_room_temperature": frozenset({3}),
+    "sub_mode": frozenset({9}),
+    "fan_stage": frozenset({9}),
+    "compressor_frequency": frozenset({6}),
+    "compressor_running": frozenset({6}),
+}
 CREDENTIAL_FETCH_TIMEOUT_S: Final = 60.0
 
 DEFAULT_OPTIONS: Final[dict[str, Any]] = {

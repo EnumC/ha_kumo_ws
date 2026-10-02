@@ -29,6 +29,7 @@ from .adapters import (
 from .cn105_task import Cn105Poller
 from .const import (
     CN105_CODES,
+    CN105_ENTITY_CODES,
     CONF_CIDRS,
     CONF_CN105_CODES,
     CONF_CN105_ENABLED,
@@ -210,6 +211,10 @@ class KumoHub:
         chosen = {int(code) for code in self.options[CONF_CN105_CODES] or ()}
         codes = tuple(code for code in CN105_CODES if code in chosen)
         return codes or tuple(DEFAULT_CN105_CODES)
+
+    def cn105_provides(self, key: str) -> bool:
+        """An entity key in CN105_ENTITY_CODES has at least one of its codes selected."""
+        return self.cn105_enabled and bool(CN105_ENTITY_CODES[key] & set(self.cn105_codes))
 
     @property
     def cn105_interval(self) -> float:

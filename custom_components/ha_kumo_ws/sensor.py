@@ -23,7 +23,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
-from .const import new_device_signal
+from .const import CN105_ENTITY_CODES, new_device_signal
 from .coordinator import KumoDeviceCoordinator
 from .entity import KumoEntity, KumoHubEntity, KumoLocalEntity
 from .hub import KumoConfigEntry, KumoHub
@@ -44,7 +44,6 @@ class KumoSensorDescription(SensorEntityDescription):
     dynamic: bool = False
     local_only: bool = False
     local_link: bool = False
-    cn105_code: int | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -142,7 +141,6 @@ UNIT_SENSORS: tuple[KumoSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda c: _cn105(c).outdoor_temperature,
         local_only=True,
-        cn105_code=3,
     ),
     KumoSensorDescription(
         key="compressor_runtime",
@@ -153,7 +151,6 @@ UNIT_SENSORS: tuple[KumoSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda c: _cn105(c).compressor_runtime_minutes,
         local_only=True,
-        cn105_code=3,
     ),
     KumoSensorDescription(
         key="cn105_room_temperature",
@@ -164,7 +161,6 @@ UNIT_SENSORS: tuple[KumoSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda c: _cn105(c).room_temperature,
         local_only=True,
-        cn105_code=3,
     ),
     KumoSensorDescription(
         key="sub_mode",
@@ -174,7 +170,6 @@ UNIT_SENSORS: tuple[KumoSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda c: _enum(_cn105(c).sub_mode, SUB_MODES),
         local_only=True,
-        cn105_code=9,
     ),
     KumoSensorDescription(
         key="fan_stage",
@@ -184,7 +179,6 @@ UNIT_SENSORS: tuple[KumoSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda c: _enum(_cn105(c).stage, STAGES),
         local_only=True,
-        cn105_code=9,
     ),
     KumoSensorDescription(
         key="compressor_frequency",
@@ -195,7 +189,6 @@ UNIT_SENSORS: tuple[KumoSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda c: _cn105(c).compressor_frequency,
         local_only=True,
-        cn105_code=6,
         dynamic=True,
     ),
 )
@@ -268,8 +261,8 @@ async def async_setup_entry(
             for description in UNIT_SENSORS:
                 if description.key in added or (description.local_only and not hub.local_capable):
                     continue
-                if description.cn105_code is not None and not (
-                    hub.cn105_enabled and description.cn105_code in hub.cn105_codes
+                if description.key in CN105_ENTITY_CODES and not hub.cn105_provides(
+                    description.key
                 ):
                     continue
                 if description.dynamic and description.value_fn(coordinator) is None:
