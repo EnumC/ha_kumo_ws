@@ -262,6 +262,7 @@ class SmartController:
         self._settle_until = 0.0
         self._retry_at = 0.0
         self._fan_at: float | None = None
+        self._temp_lost_at: float | None = None
 
     @property
     def parked_mode(self) -> HvacMode | None:
@@ -469,7 +470,13 @@ class SmartController:
 
     def _should_resume(self, mode: HvacMode, state: DeviceState, now: float) -> bool:
         if (temp := self._temperature(state, now)) is None:
-            return True
+            if not self.entity_id:
+                return True
+            # A sensor that has not loaded yet after a restart is not a lost sensor.
+            if self._temp_lost_at is None:
+                self._temp_lost_at = now
+            return now - self._temp_lost_at >= STALE_S
+        self._temp_lost_at = None
         margin = self.options.restart_margin
         sides: list[bool | None] = []
         if mode in (HvacMode.HEAT, HvacMode.AUTO):
@@ -490,6 +497,7 @@ class SmartController:
     async def _async_park(self, mode: HvacMode) -> None:
         epoch, on_since = self._epoch, self._on_since
         error: HomeAssistantError | None = None
+        self._temp_lost_at = None
         try:
             await self._records.async_set(self._serial, mode, self._clock.now())
             if epoch == self._epoch:
