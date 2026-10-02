@@ -63,6 +63,7 @@ from .const import (
     CONF_FP_DEFAULTS,
     CONF_FP_ENABLED,
     CONF_FP_SMART_FAN,
+    CONF_FP_USE_DEFAULTS,
     CONF_IP_OVERRIDES,
     CONF_POLL_INTERVAL,
     CONF_REFRESH_ON_CONNECT,
@@ -1194,7 +1195,10 @@ class KumoOptionsFlow(OptionsFlowWithReload):
         defaults = current[CONF_FP_DEFAULTS] or {}
         unit = self.hass.config.units.temperature_unit
         if user_input is not None:
-            flat = {key: value for part in user_input.values() for key, value in part.items()}
+            if user_input.get(CONF_FP_USE_DEFAULTS):
+                parks.pop(self._serial, None)
+                return self.async_create_entry(data={**current, CONF_FAN_PARK: parks})
+            flat = {key: value for name in FP_SECTIONS for key, value in user_input[name].items()}
             if (
                 flat[CONF_FP_SMART_FAN]
                 or flat[CONF_FP_ENABLED]
@@ -1207,17 +1211,20 @@ class KumoOptionsFlow(OptionsFlowWithReload):
                 parks.pop(self._serial, None)
             return self.async_create_entry(data={**current, CONF_FAN_PARK: parks})
         existing = parks.get(self._serial, defaults)
-        schema = vol.Schema(
-            {
-                vol.Required(name): section(
-                    vol.Schema({vol.Required(key): _control_selector(key, unit) for key in keys})
-                )
+        fields: dict[vol.Marker, Any] = {
+            vol.Optional(CONF_FP_USE_DEFAULTS, default=False): BooleanSelector()
+        }
+        for name, keys in FP_SECTIONS.items():
+            fields[vol.Required(name)] = section(
+                vol.Schema({vol.Required(key): _control_selector(key, unit) for key in keys})
+            )
+        schema = vol.Schema(fields)
+        suggested: dict[str, Any] = {
+            CONF_FP_USE_DEFAULTS: self._serial not in parks,
+            **{
+                name: {key: _control_display(key, existing, unit) for key in keys}
                 for name, keys in FP_SECTIONS.items()
-            }
-        )
-        suggested = {
-            name: {key: _control_display(key, existing, unit) for key in keys}
-            for name, keys in FP_SECTIONS.items()
+            },
         }
         labels = await self._async_device_labels()
         return self.async_show_form(

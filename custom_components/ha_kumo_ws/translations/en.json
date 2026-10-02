@@ -254,7 +254,7 @@
       },
       "fan_park": {
         "title": "Smart control",
-        "description": "Active for: {enabled}\n\nThe toggles below are the defaults for units without their own settings. Pick a unit to tune it or opt it out.",
+        "description": "Active for: {enabled}\n\nThe toggles below are the defaults for units without their own settings. Pick a unit to tune it, opt it out, or return it to these defaults.",
         "data": {
           "smart_fan": "Dynamic fan control",
           "enabled": "Automatic off",
@@ -269,6 +269,12 @@
       "fan_park_unit": {
         "title": "Smart control",
         "description": "Unit {unit}. A remote temperature sensor is recommended, because the unit's own reading is unreliable while its fan is slow or stopped.",
+        "data": {
+          "use_defaults": "Use all-units defaults"
+        },
+        "data_description": {
+          "use_defaults": "Clears this unit's own settings so it follows the all-units defaults. Turn off to use the settings below."
+        },
         "sections": {
           "fan": {
             "name": "Dynamic fan control",

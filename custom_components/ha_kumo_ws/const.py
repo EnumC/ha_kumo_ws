@@ -34,6 +34,7 @@ DEFAULT_RT_INTERVAL: Final = 20
 
 CONF_FAN_PARK: Final = "fan_park"
 CONF_FP_DEFAULTS: Final = "fan_park_defaults"
+CONF_FP_USE_DEFAULTS: Final = "use_defaults"
 CONF_FP_SMART_FAN: Final = "smart_fan"
 CONF_FP_FULL_AT: Final = "full_speed_at"
 CONF_FP_HYSTERESIS: Final = "fan_hysteresis"
