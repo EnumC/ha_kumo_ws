@@ -41,8 +41,56 @@ Alternatively, add this repo manually in HACS:
 - Intelligently avoid race conditions by queuing and invalidating requests/updates.
 - Climate entities with fan/swing control, dual setpoints in Auto mode, and guards against stale update values.
 - NEW (local required): Selectable temperature source (on device thermistor, wireless sensor (PAC-USWHS003-TH-1, must pair in official app first), or from a Home Assistant sensor entity). Home Assistant sensor entity will also be available without local creds in a future update, so stay tuned!
-- NEW (local required): Real compressor running state to drive hvac_action. 
+- NEW: Smart control (dynamic fan control, automatic off and resume). See below.
+- NEW: hvac_action from the unit's real states (standby, defrost, hot adjust, and CN105 sub mode and compressor flag when enabled). See below.
 - Exposes RSSI, error codes, serial number, and model number for each device.
+
+## Smart control
+Setup asks whether to turn on dynamic fan control and automatic off for all units. Afterwards, the integration options under "Smart control" change these all-units defaults, and picking a unit tunes it or opts it out. Both features work on cloud and local entries in Heat, Cool and Auto. A Home Assistant temperature sensor mapped as the unit's remote temperature source is used when set; otherwise the unit's room temperature is used.
+
+### Dynamic fan control
+- When enabled, the climate entity gets a "Dynamic" fan mode. Picking it lets the integration set the fan speed; picking any other speed hands control back to you.
+- The speed scales with how far the room is from the setpoint: the quietest speed at or past the setpoint, the strongest at "Full speed at" or more.
+- Speed changes are rate limited and use a hysteresis, so the fan does not hunt between two speeds. The unit's own fan control is left alone during defrost and hot adjust.
+- A speed changed from the remote while Dynamic is active is set back after the hold time.
+
+### Automatic off
+- Mitsubishi units keep the indoor fan running after the room reaches the setpoint, and there is no fan-off command. When enabled, the unit is powered off once the room has passed the setpoint by the off margin for the dwell time, and powered back on in the same mode once it drifts back past the restart margin.
+- While held off, the climate entity keeps showing the intended mode with action Idle.
+- Turning the unit off or changing the mode from Home Assistant, or powering it on externally, cancels the hold. Turn the unit off from Home Assistant rather than the remote: an off from the remote cannot be seen while the unit is already held off.
+
+### Options
+
+| Option | Default | Range |
+|---|---|---|
+| Dynamic fan control | Off | |
+| Full speed at | 2.0 C from setpoint | 1.0-5.0 C |
+| Fan hysteresis | 0.25 C | 0.0-1.0 C |
+| Fan hold (minimum time between speed changes) | 120 s | 30-900 s |
+| Automatic off | Off | |
+| Off margin (past setpoint before turning off) | 0.5 C | 0.0-2.0 C |
+| Restart margin (past setpoint before turning back on) | 1.0 C | 0.5-3.0 C |
+| Dwell (time past the off margin before turning off) | 3 min | 1-30 min |
+| Idle dwell (shorter dwell when the unit reports standby or a compressor stop) | 1 min | 0-10 min |
+| Minimum on time | 10 min | 0-60 min |
+| Minimum off time | 5 min | 3-60 min |
+
+Temperature options are shown in your Home Assistant unit.
+
+## HVAC action
+| Unit state | hvac_action |
+|---|---|
+| Off | Off |
+| Held off by automatic off | Idle |
+| Defrost (status, or CN105 0x09 sub mode) | Defrosting |
+| Hot adjust (status), or CN105 0x09 preheat / warmup | Preheating |
+| Fan mode | Fan |
+| Standby (status), CN105 0x09 standby, or CN105 0x06 compressor stopped | Idle |
+| Dry | Drying |
+| Heat / Cool | Heating / Cooling |
+| Auto | Heating or Cooling from the active side, unknown when it cannot be told |
+
+The Compressor sensor needs CN105 code 0x06. The 0x03 runtime counter is still exposed as a sensor but is no longer used to infer compressor activity, because it rises whenever the unit is on.
 
 ## Project Layout
 - `/custom_components/ha_kumo_ws/` — Home Assistant custom component
