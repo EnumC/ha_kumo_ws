@@ -1,4 +1,4 @@
-"""CN105 info-reply decoders and the compressor-activity estimator."""
+"""CN105 info-reply decoders."""
 
 from collections.abc import Callable
 from enum import IntEnum
@@ -17,9 +17,6 @@ from .frames import (
     is_info_reply,
     valid_cn105_reply,
 )
-
-# Counter has 1-minute resolution; samples must be at least this far apart.
-RUNTIME_SAMPLE_MIN_INTERVAL_SECONDS = 70.0
 
 _Scalar = float | int | bool | str | None
 _Decoder = Callable[[bytes], dict[str, _Scalar]]
@@ -130,40 +127,6 @@ def decode_info_reply(frame: bytes | bytearray | None, code: int) -> dict[str, _
     return decoder(b"")
 
 
-class CompressorActivityEstimator:
-    """Estimate whether the compressor is running from the 0x03 runtime counter."""
-
-    def __init__(self, min_interval: float = RUNTIME_SAMPLE_MIN_INTERVAL_SECONDS) -> None:
-        self._min_interval = min_interval
-        self._sample: tuple[float, int] | None = None
-        self._running: bool | None = None
-
-    @property
-    def running(self) -> bool | None:
-        """Whether the compressor is running, or None if we cannot tell yet."""
-        return self._running
-
-    def update(self, runtime_minutes: int | None, now: float) -> bool | None:
-        """Add a counter reading taken at ``now`` and return the estimate."""
-        if runtime_minutes is None:
-            return self._running
-        if self._sample is None:
-            self._sample = (now, runtime_minutes)
-            return self._running
-        sampled_at, sampled_minutes = self._sample
-        if runtime_minutes == sampled_minutes and now - sampled_at < self._min_interval:
-            # Keep the older reading so the gap between readings keeps growing.
-            return self._running
-        self._sample = (now, runtime_minutes)
-        self._running = runtime_minutes > sampled_minutes
-        return self._running
-
-    def reset(self) -> None:
-        """Throw away the stored reading and start over."""
-        self._sample = None
-        self._running = None
-
-
 __all__ = [
     "AUTO_SUB_MODE_NAMES",
     "DEFAULT_INFO_CODES",
@@ -174,11 +137,9 @@ __all__ = [
     "PACKET_HEADER",
     "PACKET_SUBHEADER",
     "PAYLOAD_SIZE",
-    "RUNTIME_SAMPLE_MIN_INTERVAL_SECONDS",
     "STAGE_NAMES",
     "SUB_MODE_NAMES",
     "TELEMETRY_KEYS",
-    "CompressorActivityEstimator",
     "InfoCode",
     "build_cn105_frame",
     "build_info_request",

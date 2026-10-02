@@ -32,10 +32,13 @@
       },
       "cn105": {
         "title": "CN105 telemetry (experimental)",
-        "description": "Reads extra telemetry (outdoor temperature, compressor state) over the unit's CN105 bus through the adapter. Experimental: only one local client should talk to a unit, and code 0x06 may lock the bus until the adapter reboots if the hardware does not support it. This can be changed later in the integration options.",
+        "description": "Reads extra telemetry over the unit's CN105 bus through the adapter. Experimental: only one local client should talk to a unit. This can be changed later in the integration options.",
         "data": {
           "cn105_enabled": "Enable",
           "cn105_codes": "Request codes"
+        },
+        "data_description": {
+          "cn105_codes": "- **0x03**: Outdoor temperature, Return air temperature and Compressor runtime sensors. The runtime counter may count unit on-time rather than compressor time.\n- **0x09**: Sub mode and Fan stage sensors, plus defrost, preheat, standby and auto heat/cool detection for the HVAC action.\n- **0x06**: Compressor frequency sensor, plus compressor running for the Compressor sensor and HVAC action. Some units stop answering CN105 until the adapter reboots.\n\nThe Compressor sensor needs 0x06."
         }
       },
       "cloud_login": {
@@ -205,13 +208,14 @@
       },
       "cn105": {
         "title": "CN105 telemetry (experimental)",
-        "description": "Reads extra telemetry (outdoor temperature, compressor state) over the unit's CN105 bus through the adapter. Experimental: only one local client should talk to a unit, and code 0x06 may lock the bus until the adapter reboots if the hardware does not support it.",
+        "description": "Reads extra telemetry over the unit's CN105 bus through the adapter. Experimental: only one local client should talk to a unit.",
         "data": {
           "cn105_enabled": "Enable",
           "cn105_codes": "Request codes",
           "cn105_interval": "Interval"
         },
         "data_description": {
+          "cn105_codes": "- **0x03**: Outdoor temperature, Return air temperature and Compressor runtime sensors. The runtime counter may count unit on-time rather than compressor time.\n- **0x09**: Sub mode and Fan stage sensors, plus defrost, preheat, standby and auto heat/cool detection for the HVAC action.\n- **0x06**: Compressor frequency sensor, plus compressor running for the Compressor sensor and HVAC action. Some units stop answering CN105 until the adapter reboots.\n\nThe Compressor sensor needs 0x06.",
           "cn105_interval": "At least 75 seconds."
         }
       },
@@ -317,9 +321,9 @@
     },
     "cn105_codes": {
       "options": {
-        "3": "0x03 temperatures",
-        "9": "0x09 operating state",
-        "6": "0x06 compressor frequency (may lock the bus if hardware unsupported)"
+        "3": "0x03 outdoor temperature, return air temperature and runtime counter",
+        "9": "0x09 sub mode and fan stage",
+        "6": "0x06 compressor frequency and compressor running (may lock the bus)"
       }
     }
   },

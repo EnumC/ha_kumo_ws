@@ -8,13 +8,7 @@ from typing import Any, Protocol
 
 from ...clock import Clock, SystemClock
 from ...domain.state import Cn105Telemetry
-from . import (
-    DEFAULT_INFO_CODES,
-    TELEMETRY_KEYS,
-    CompressorActivityEstimator,
-    InfoCode,
-    decode_info_reply,
-)
+from . import DEFAULT_INFO_CODES, TELEMETRY_KEYS, InfoCode, decode_info_reply
 
 _LOGGER = logging.getLogger(__name__)
 _SYSTEM_CLOCK = SystemClock()
@@ -30,17 +24,13 @@ class InfoBus(Protocol):
     ) -> bytes | None: ...
 
 
-def compressor_running(
-    operating: bool | None,
-    mode: str | None,
-    estimated: bool | None,
-) -> bool | None:
-    """Whether the compressor is running, or None when it cannot be told."""
+def compressor_running(operating: bool | None, mode: str | None) -> bool | None:
+    """The 0x06 flag; False when off or idle without it, else None."""
     if operating is not None:
         return operating
     if mode in ("off", "idle"):
         return False
-    return estimated
+    return None
 
 
 def _as_float(value: object) -> float | None:
@@ -76,7 +66,6 @@ class Cn105TelemetryReader:
         self._bus = bus
         self._codes = tuple(codes)
         self._clock = clock
-        self._estimator = CompressorActivityEstimator()
 
     async def read(
         self,
@@ -93,7 +82,6 @@ class Cn105TelemetryReader:
 
     async def _read(self, mode: str | None, codes: tuple[int, ...]) -> Cn105Telemetry:
         fields: dict[str, Any] = {}
-        runtime_sample: tuple[int | None, float] | None = None
         answered = False
         for code in codes:
             info = _known_code(code)
@@ -109,18 +97,9 @@ class Cn105TelemetryReader:
                 continue
             if reply is None:
                 continue
-            decoded = decode_info_reply(reply, int(info))
-            fields.update(decoded)
-            if "compressor_runtime_minutes" in decoded:
-                # Time the counter when read; a later timed-out code must not age this sample.
-                runtime = decoded["compressor_runtime_minutes"]
-                runtime_sample = (_as_int(runtime), self._clock.monotonic())
+            fields.update(decode_info_reply(reply, int(info)))
             answered = True
-        if runtime_sample is not None:
-            self._estimator.update(runtime_sample[0], runtime_sample[1])
-        operating = compressor_running(
-            _as_bool(fields.get("operating")), mode, self._estimator.running
-        )
+        operating = compressor_running(_as_bool(fields.get("operating")), mode)
         return Cn105Telemetry(
             room_temperature=_as_float(fields.get("room_temperature")),
             outdoor_temperature=_as_float(fields.get("outdoor_temperature")),
