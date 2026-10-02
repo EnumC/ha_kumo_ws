@@ -3,12 +3,12 @@
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import datetime, timedelta
-from typing import Protocol
+from datetime import datetime
+from typing import Any, Protocol
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.core import CALLBACK_TYPE, HassJob, HomeAssistant, callback
+from homeassistant.helpers.event import async_call_later
 
 from .const import DOMAIN
 from .coordinator import KumoDeviceCoordinator
@@ -22,6 +22,8 @@ from .pykumo2.transport import TransportKind
 _LOGGER = logging.getLogger(__name__)
 
 FRESH_INTERVALS = 3
+STATE_CHANGE_DELAY = 5.0
+_OFF_SKIPPED = frozenset({InfoCode.COMPRESSOR, InfoCode.SUB_MODE})
 _WARNED_COMPRESSOR: set[str] = set()
 
 
@@ -46,6 +48,18 @@ def _reader_mode(state: DeviceState) -> str | None:
     if state.standby:
         return "idle"
     return None if state.mode is None else state.mode.value
+
+
+def _trigger_key(state: DeviceState) -> tuple[Any, ...]:
+    return (
+        state.power,
+        state.mode,
+        state.auto_active,
+        state.standby,
+        state.defrost,
+        state.sp_heat,
+        state.sp_cool,
+    )
 
 
 class _ExclusiveBus:
@@ -98,11 +112,16 @@ class Cn105Poller:
         self._entry = entry
         self._coordinator = coordinator
         self._interval = interval
+        self._codes = codes
         self._reader = Cn105TelemetryReader(
             _ExclusiveBus(coordinator, local), codes=codes, clock=coordinator.hub.clock
         )
         self._task: asyncio.Task[None] | None = None
         self._unsubs: list[Callable[[], None]] = []
+        self._unsub_tick: CALLBACK_TYPE | None = None
+        self._tick_job = HassJob(self._on_tick, cancel_on_shutdown=True)
+        self._key = _trigger_key(coordinator.data)
+        self._kicked_at: float | None = None
         if InfoCode.COMPRESSOR in codes and entry.entry_id not in _WARNED_COMPRESSOR:
             _WARNED_COMPRESSOR.add(entry.entry_id)
             _LOGGER.warning(
@@ -112,19 +131,13 @@ class Cn105Poller:
 
     @callback
     def async_start(self) -> None:
-        self._unsubs.append(
-            async_track_time_interval(
-                self._hass,
-                self._on_tick,
-                timedelta(seconds=self._interval),
-                cancel_on_shutdown=True,
-            )
-        )
+        self._unsubs.append(self._coordinator.async_add_listener(self._on_state))
         self._on_tick(None)
 
     async def async_stop(self) -> None:
         while self._unsubs:
             self._unsubs.pop()()
+        self._cancel_tick()
         if (task := self._task) is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
@@ -134,10 +147,34 @@ class Cn105Poller:
     def reading(self) -> bool:
         return self._task is not None and not self._task.done()
 
+    def _cancel_tick(self) -> None:
+        if self._unsub_tick is not None:
+            self._unsub_tick()
+            self._unsub_tick = None
+
+    def _schedule(self, delay: float) -> None:
+        self._cancel_tick()
+        self._unsub_tick = async_call_later(self._hass, delay, self._tick_job)
+
+    @callback
+    def _on_state(self) -> None:
+        key = _trigger_key(self._coordinator.data)
+        if key == self._key:
+            return
+        self._key = key
+        now = self._coordinator.hub.clock.monotonic()
+        if self._kicked_at is not None and now - self._kicked_at < self._interval:
+            return
+        self._kicked_at = now
+        self._schedule(STATE_CHANGE_DELAY)
+
     @callback
     def _on_tick(self, _now: datetime | None) -> None:
-        # Paused outside LOCAL_OK; a slow read is never overlapped by the next one.
-        if self.reading or self._coordinator.link.state is not LinkState.LOCAL_OK:
+        if self.reading:
+            self._schedule(STATE_CHANGE_DELAY)
+            return
+        self._schedule(self._interval)
+        if self._coordinator.link.state is not LinkState.LOCAL_OK:
             return
         self._task = self._entry.async_create_background_task(
             self._hass, self._async_read(), f"{DOMAIN} {self._coordinator.serial} cn105"
@@ -145,7 +182,16 @@ class Cn105Poller:
 
     async def _async_read(self) -> None:
         coordinator = self._coordinator
-        telemetry = await self._reader.read(mode=_reader_mode(coordinator.data))
+        mode = _reader_mode(coordinator.data)
+        codes = self._codes
+        if mode == "off":
+            codes = tuple(code for code in codes if code not in _OFF_SKIPPED)
+            if not codes:
+                values = {"cn105": Cn105Telemetry(operating=False)}
+                now = coordinator.hub.clock.now()
+                coordinator.async_handle_push(StatePatch(TransportKind.LOCAL, values, now))
+                return
+        telemetry = await self._reader.read(mode=mode, codes=codes)
         if telemetry.read_at is None:
             _LOGGER.debug("CN105 read for %s got no answer", coordinator.serial)
             return
