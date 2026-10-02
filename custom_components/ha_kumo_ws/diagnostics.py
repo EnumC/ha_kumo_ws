@@ -28,6 +28,7 @@ TO_REDACT = {
     "unique_id",
     "uuid",
     "ip_overrides",
+    "fan_park",
     "title",
 }
 
@@ -56,6 +57,7 @@ async def async_get_config_entry_diagnostics(
     for index, (serial, coordinator) in enumerate(sorted(hub.coordinators.items())):
         link = coordinator.link
         creds = hub.credentials.get(serial) if hub.credentials is not None else None
+        controller = hub.controllers.get(serial)
         devices.append(
             {
                 "device": f"device_{index}",
@@ -69,6 +71,10 @@ async def async_get_config_entry_diagnostics(
                 "last_update_success": coordinator.last_update_success,
                 "has_local_credentials": creds is not None and creds.has_secrets,
                 "credentials_verified": creds is not None and creds.verified_at is not None,
+                "smart_fan": controller is not None and controller.options.smart_fan,
+                "smart_fan_active": controller is not None and controller.smart_fan_active,
+                "auto_off": controller is not None and controller.options.auto_off,
+                "parked_mode": _plain(controller.parked_mode) if controller is not None else None,
             }
         )
     data = {

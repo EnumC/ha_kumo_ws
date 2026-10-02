@@ -23,6 +23,7 @@ from .const import (
 from .hub import KumoConfigEntry, KumoHub
 from .pykumo2.errors import AuthenticationError, KumoError
 from .repairs import async_setup_repairs
+from .smart_control import async_remove_records
 from .storage import async_remove_store
 
 _LOGGER = logging.getLogger(__name__)
@@ -88,8 +89,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: KumoConfigEntry) -> boo
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Delete the credential Store."""
+    """Delete the credential and smart control Stores."""
     await async_remove_store(hass, entry.unique_id or entry.entry_id)
+    await async_remove_records(hass, entry.entry_id)
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

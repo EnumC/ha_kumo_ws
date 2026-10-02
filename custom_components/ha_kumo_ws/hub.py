@@ -35,6 +35,8 @@ from .const import (
     CONF_CN105_ENABLED,
     CONF_CN105_INTERVAL,
     CONF_CONNECTION_MODE,
+    CONF_FAN_PARK,
+    CONF_FP_DEFAULTS,
     CONF_IP_OVERRIDES,
     CONF_LOCAL_ROOM_TEMP_OFFSET,
     CONF_POLL_INTERVAL,
@@ -82,6 +84,7 @@ from .pykumo2.routing.router import DeviceLink
 from .pykumo2.routing.session_manager import CloudLeaseManager
 from .pykumo2.transport import TransportKind
 from .remote_temp import RemoteTempFeeder
+from .smart_control import ControlOptions, ParkRecords, SmartController, async_release
 from .storage import HaCredentialRepository
 
 _LOGGER = logging.getLogger(__name__)
@@ -120,6 +123,8 @@ class KumoHub:
         self.coordinators: dict[str, KumoDeviceCoordinator] = {}
         self.cn105_pollers: dict[str, Cn105Poller] = {}
         self.feeders: dict[str, RemoteTempFeeder] = {}
+        self.controllers: dict[str, SmartController] = {}
+        self.park_records = ParkRecords(hass, entry.entry_id)
         self._stopping = False
         self._tasks: set[asyncio.Task[Any]] = set()
         self._unit_services_started = False
@@ -239,6 +244,7 @@ class KumoHub:
             self._unsubs.append(self.credentials.add_listener(self._on_credentials_changed))
         if self.cloud is not None:
             self.cloud.set_listener(self._on_push)
+        await self.park_records.async_load()
         inventory = await self._async_load_inventory()
         for device, seed in inventory.values():
             await self._async_add_device(device, seed)
@@ -247,6 +253,8 @@ class KumoHub:
         self._unit_services_started = True
         for serial in self.coordinators:
             self._start_unit_services(serial)
+        for serial in self.park_records.serials() - self.coordinators.keys():
+            self.park_records.pop(serial)
         if self.has_cloud:
             self._unsubs.append(
                 async_track_time_interval(
@@ -267,8 +275,11 @@ class KumoHub:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
-        # CN105 reads stop first so feeder restore commands run before coordinators close.
+        # Controllers stop first and stay parked; feeder restores run before coordinators close.
         self._unit_services_started = False
+        for controller in self.controllers.values():
+            await controller.async_stop()
+        self.controllers.clear()
         for poller in self.cn105_pollers.values():
             await poller.async_stop()
         for feeder in self.feeders.values():
@@ -289,10 +300,11 @@ class KumoHub:
             await self.local.async_close()
 
     def _start_unit_services(self, serial: str) -> None:
-        """CN105 reads and the remote temperature feeder; local-capable entries only."""
+        """Smart control; CN105 reads and the remote temperature feeder on local-capable entries."""
         if self._stopping:
             return
         coordinator = self.coordinators[serial]
+        self._start_control(coordinator)
         if self.local is None:
             return
         if self.cn105_enabled and serial not in self.cn105_pollers:
@@ -318,6 +330,33 @@ class KumoHub:
             )
             self.feeders[serial] = feeder
             feeder.async_start()
+
+    def _start_control(self, coordinator: KumoDeviceCoordinator) -> None:
+        serial = coordinator.serial
+        options = self.control_options(serial)
+        if not options.auto_off and (record := self.park_records.get(serial)) is not None:
+            self._spawn(
+                async_release(coordinator, self.park_records, record.mode),
+                f"{serial} fan park release",
+            )
+        if options.active and serial not in self.controllers:
+            controller = SmartController(
+                self.hass,
+                self.entry,
+                coordinator,
+                self.park_records,
+                options=options,
+                entity_id=self.remote_temp_mapping(serial).get(CONF_RT_ENTITY),
+            )
+            self.controllers[serial] = controller
+            controller.async_start()
+
+    def control_options(self, serial: str) -> ControlOptions:
+        """Smart control options for serial, else the all-units defaults."""
+        unit = (self.options[CONF_FAN_PARK] or {}).get(serial)
+        return ControlOptions.from_options(
+            (self.options[CONF_FP_DEFAULTS] or {}) if unit is None else unit
+        )
 
     def remote_temp_mapping(self, serial: str) -> Mapping[str, Any]:
         """Remote temperature options for serial; empty when unmapped."""

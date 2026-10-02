@@ -32,6 +32,48 @@ CONF_RT_INTERVAL: Final = "interval"
 CONF_RT_MANAGE_SOURCE: Final = "manage_source"
 DEFAULT_RT_INTERVAL: Final = 20
 
+CONF_FAN_PARK: Final = "fan_park"
+CONF_FP_DEFAULTS: Final = "fan_park_defaults"
+CONF_FP_SMART_FAN: Final = "smart_fan"
+CONF_FP_FULL_AT: Final = "full_speed_at"
+CONF_FP_HYSTERESIS: Final = "fan_hysteresis"
+CONF_FP_FAN_HOLD: Final = "fan_hold"
+CONF_FP_ENABLED: Final = "enabled"
+CONF_FP_OFF_MARGIN: Final = "off_margin"
+CONF_FP_MARGIN: Final = "restart_margin"
+CONF_FP_DWELL: Final = "dwell"
+CONF_FP_IDLE_DWELL: Final = "idle_dwell"
+CONF_FP_MIN_ON: Final = "min_on"
+CONF_FP_MIN_OFF: Final = "min_off"
+FP_SECTIONS: Final[dict[str, tuple[str, ...]]] = {
+    "fan": (CONF_FP_SMART_FAN, CONF_FP_FULL_AT, CONF_FP_HYSTERESIS, CONF_FP_FAN_HOLD),
+    "auto_off": (
+        CONF_FP_ENABLED,
+        CONF_FP_OFF_MARGIN,
+        CONF_FP_MARGIN,
+        CONF_FP_DWELL,
+        CONF_FP_IDLE_DWELL,
+        CONF_FP_MIN_ON,
+        CONF_FP_MIN_OFF,
+    ),
+}
+# (default, min, max): temperature deltas in C, durations in seconds.
+FP_LIMITS: Final[dict[str, tuple[float, float, float]]] = {
+    CONF_FP_FULL_AT: (2.0, 1.0, 5.0),
+    CONF_FP_HYSTERESIS: (0.25, 0.0, 1.0),
+    CONF_FP_FAN_HOLD: (120, 30, 900),
+    CONF_FP_OFF_MARGIN: (0.5, 0.0, 2.0),
+    CONF_FP_MARGIN: (1.0, 0.5, 3.0),
+    CONF_FP_DWELL: (180, 60, 1800),
+    CONF_FP_IDLE_DWELL: (60, 0, 600),
+    CONF_FP_MIN_ON: (600, 0, 3600),
+    CONF_FP_MIN_OFF: (300, 180, 3600),
+}
+FP_TEMPERATURES: Final = frozenset(
+    {CONF_FP_FULL_AT, CONF_FP_HYSTERESIS, CONF_FP_OFF_MARGIN, CONF_FP_MARGIN}
+)
+FP_MINUTES: Final = frozenset({CONF_FP_DWELL, CONF_FP_IDLE_DWELL, CONF_FP_MIN_ON, CONF_FP_MIN_OFF})
+
 DEFAULT_POLL_INTERVAL: Final = 30
 MIN_POLL_INTERVAL: Final = 15
 MAX_POLL_INTERVAL: Final = 300
@@ -61,6 +103,8 @@ DEFAULT_OPTIONS: Final[dict[str, Any]] = {
     CONF_CN105_CODES: DEFAULT_CN105_CODES,
     CONF_CN105_INTERVAL: DEFAULT_CN105_INTERVAL,
     CONF_REMOTE_TEMP: {},
+    CONF_FAN_PARK: {},
+    CONF_FP_DEFAULTS: {},
     CONF_LOCAL_ROOM_TEMP_OFFSET: False,
     CONF_TARGET_TEMP_STEP: "auto",
 }

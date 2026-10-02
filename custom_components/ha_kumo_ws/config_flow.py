@@ -20,8 +20,9 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlowWithReload,
 )
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, UnitOfTemperature
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.httpx_client import get_async_client
@@ -42,6 +43,7 @@ from homeassistant.helpers.selector import (
 )
 from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo
 from homeassistant.util.ssl import SSL_ALPN_HTTP11_HTTP2
+from homeassistant.util.unit_conversion import TemperatureDeltaConverter
 
 from .adapters import (
     CloudInventory,
@@ -57,6 +59,10 @@ from .const import (
     CONF_CN105_ENABLED,
     CONF_CN105_INTERVAL,
     CONF_CONNECTION_MODE,
+    CONF_FAN_PARK,
+    CONF_FP_DEFAULTS,
+    CONF_FP_ENABLED,
+    CONF_FP_SMART_FAN,
     CONF_IP_OVERRIDES,
     CONF_POLL_INTERVAL,
     CONF_REFRESH_ON_CONNECT,
@@ -73,6 +79,10 @@ from .const import (
     DEFAULT_OPTIONS,
     DEFAULT_RT_INTERVAL,
     DOMAIN,
+    FP_LIMITS,
+    FP_MINUTES,
+    FP_SECTIONS,
+    FP_TEMPERATURES,
     MAX_POLL_INTERVAL,
     MIN_CN105_INTERVAL,
     MIN_POLL_INTERVAL,
@@ -90,6 +100,7 @@ from .pykumo2.credentials.provider import CloudCredentialProvider, FetchResult
 from .pykumo2.credentials.service import CredentialService, RefreshResult
 from .pykumo2.domain.enums import SetupMethod
 from .pykumo2.errors import AuthenticationError, KumoError
+from .smart_control import ControlOptions
 from .storage import async_load_service, async_save_units
 
 _LOGGER = logging.getLogger(__name__)
@@ -147,6 +158,11 @@ def _valid_cidr(text: str) -> bool:
     return network.num_addresses <= MAX_SCAN_ADDRESSES
 
 
+def _label(serial: str, name: str | None) -> str:
+    name = name or serial
+    return serial if name == serial else f"{name} ({serial})"
+
+
 def _summarize(items: Iterable[str]) -> str:
     """Comma list of the first items; error strings carry serials and reasons only."""
     items = list(items)
@@ -200,6 +216,19 @@ def _cn105_schema() -> vol.Schema:
             ),
         }
     )
+
+
+def _control_defaults_schema() -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required(CONF_FP_SMART_FAN, default=False): BooleanSelector(),
+            vol.Required(CONF_FP_ENABLED, default=False): BooleanSelector(),
+        }
+    )
+
+
+def _control_defaults(user_input: Mapping[str, Any]) -> dict[str, bool]:
+    return {key: bool(user_input.get(key)) for key in (CONF_FP_SMART_FAN, CONF_FP_ENABLED)}
 
 
 def _cn105_options(user_input: Mapping[str, Any]) -> dict[str, Any]:
@@ -819,11 +848,18 @@ class KumoOptionsFlow(OptionsFlowWithReload):
     async def _async_unit_labels(self) -> dict[str, str]:
         """Serial to "Name (serial)", sorted by serial."""
         service = await self._async_credentials()
-        labels = {}
-        for serial, unit in sorted(service.all().items()):
-            name = service.meta(serial).get("name") or unit.label or serial
-            labels[serial] = serial if name == serial else f"{name} ({serial})"
-        return labels
+        return {
+            serial: _label(serial, service.meta(serial).get("name") or unit.label)
+            for serial, unit in sorted(service.all().items())
+        }
+
+    async def _async_device_labels(self) -> dict[str, str]:
+        """Loaded entry: every device, cloud included; else the stored units."""
+        if (hub := self._hub()) is None:
+            return await self._async_unit_labels()
+        return {
+            serial: _label(serial, device.name) for serial, device in sorted(hub.devices.items())
+        }
 
     async def _async_unit_options(self) -> list[SelectOptionDict]:
         labels = await self._async_unit_labels()
@@ -842,7 +878,7 @@ class KumoOptionsFlow(OptionsFlowWithReload):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Options menu."""
-        menu = ["connection", "climate"]
+        menu = ["connection", "climate", "fan_park"]
         if self._local_capable:
             menu += ["network", "cn105", "remote_temp", "credentials"]
         return self.async_show_menu(step_id="init", menu_options=menu)
@@ -1091,6 +1127,78 @@ class KumoOptionsFlow(OptionsFlowWithReload):
             description_placeholders={"unit": labels.get(self._serial, self._serial)},
         )
 
+    async def async_step_fan_park(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """All-units defaults, and optionally a unit to tune."""
+        labels = await self._async_device_labels()
+        if not labels:
+            return self.async_abort(reason="no_devices")
+        current = self._current()
+        if user_input is not None:
+            current = {**current, CONF_FP_DEFAULTS: _control_defaults(user_input)}
+            if not (serial := user_input.get(CONF_UNIT)):
+                return self.async_create_entry(data=current)
+            self._options, self._serial = current, serial
+            return await self.async_step_fan_park_unit()
+        units = current[CONF_FAN_PARK]
+        defaults = current[CONF_FP_DEFAULTS] or {}
+        enabled = [
+            label
+            for serial, label in labels.items()
+            if ControlOptions.from_options(units.get(serial, defaults)).active
+        ]
+        choices = [SelectOptionDict(value=serial, label=label) for serial, label in labels.items()]
+        schema = _control_defaults_schema().extend(
+            {vol.Optional(CONF_UNIT): SelectSelector(SelectSelectorConfig(options=choices))}
+        )
+        return self.async_show_form(
+            step_id="fan_park",
+            data_schema=self.add_suggested_values_to_schema(schema, _control_defaults(defaults)),
+            description_placeholders={"enabled": _summarize(enabled)},
+        )
+
+    async def async_step_fan_park_unit(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Dynamic fan control and automatic off for one unit; stored in Celsius and seconds."""
+        current = self._options or self._current()
+        parks = {k: dict(v) for k, v in current[CONF_FAN_PARK].items()}
+        defaults = current[CONF_FP_DEFAULTS] or {}
+        unit = self.hass.config.units.temperature_unit
+        if user_input is not None:
+            flat = {key: value for part in user_input.values() for key, value in part.items()}
+            if (
+                flat[CONF_FP_SMART_FAN]
+                or flat[CONF_FP_ENABLED]
+                or ControlOptions.from_options(defaults).active
+            ):
+                parks[self._serial] = {
+                    key: _control_value(key, value, unit) for key, value in flat.items()
+                }
+            else:
+                parks.pop(self._serial, None)
+            return self.async_create_entry(data={**current, CONF_FAN_PARK: parks})
+        existing = parks.get(self._serial, defaults)
+        schema = vol.Schema(
+            {
+                vol.Required(name): section(
+                    vol.Schema({vol.Required(key): _control_selector(key, unit) for key in keys})
+                )
+                for name, keys in FP_SECTIONS.items()
+            }
+        )
+        suggested = {
+            name: {key: _control_display(key, existing, unit) for key in keys}
+            for name, keys in FP_SECTIONS.items()
+        }
+        labels = await self._async_device_labels()
+        return self.async_show_form(
+            step_id="fan_park_unit",
+            data_schema=self.add_suggested_values_to_schema(schema, suggested),
+            description_placeholders={"unit": labels.get(self._serial, self._serial)},
+        )
+
     # No update listener or reload here; the hub hot-reloads credentials itself.
 
     async def async_step_credentials(
@@ -1223,6 +1331,58 @@ class KumoOptionsFlow(OptionsFlowWithReload):
             data_schema=vol.Schema({}),
             description_placeholders=self._report,
         )
+
+
+def _delta(celsius: float, unit: str) -> float:
+    return round(TemperatureDeltaConverter.convert(celsius, UnitOfTemperature.CELSIUS, unit), 2)
+
+
+def _control_selector(key: str, unit: str) -> BooleanSelector | NumberSelector:
+    if key not in FP_LIMITS:
+        return BooleanSelector()
+    _, low, high = FP_LIMITS[key]
+    if key in FP_TEMPERATURES:
+        return NumberSelector(
+            NumberSelectorConfig(
+                min=_delta(low, unit),
+                max=_delta(high, unit),
+                step=0.05,
+                unit_of_measurement=unit,
+                mode=NumberSelectorMode.BOX,
+            )
+        )
+    if key in FP_MINUTES:
+        return NumberSelector(
+            NumberSelectorConfig(
+                min=low / 60,
+                max=high / 60,
+                step=1,
+                unit_of_measurement="min",
+                mode=NumberSelectorMode.BOX,
+            )
+        )
+    return _seconds(int(low), int(high))
+
+
+def _control_display(key: str, stored: Mapping[str, Any], unit: str) -> Any:
+    """Stored value (or default) in the form's unit."""
+    if key not in FP_LIMITS:
+        return bool(stored.get(key))
+    value = float(stored.get(key, FP_LIMITS[key][0]))
+    if key in FP_TEMPERATURES:
+        return _delta(value, unit)
+    return round(value / 60) if key in FP_MINUTES else round(value)
+
+
+def _control_value(key: str, value: Any, unit: str) -> Any:
+    """Form value to the stored unit: Celsius or seconds."""
+    if key not in FP_LIMITS:
+        return bool(value)
+    if key in FP_TEMPERATURES:
+        return round(
+            TemperatureDeltaConverter.convert(float(value), unit, UnitOfTemperature.CELSIUS), 2
+        )
+    return round(float(value) * 60) if key in FP_MINUTES else round(float(value))
 
 
 def _seconds(minimum: int, maximum: int) -> NumberSelector:

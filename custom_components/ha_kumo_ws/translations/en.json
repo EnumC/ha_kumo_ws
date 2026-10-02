@@ -148,6 +148,7 @@
         "menu_options": {
           "connection": "Connection",
           "climate": "Climate",
+          "fan_park": "Smart control",
           "network": "Network",
           "cn105": "CN105 telemetry (experimental)",
           "remote_temp": "Remote temperature sensor",
@@ -239,6 +240,64 @@
           "manage_source": "Switch the unit to the remote temperature and restore its previous source when the sensor is unavailable or the mapping is removed."
         }
       },
+      "fan_park": {
+        "title": "Smart control",
+        "description": "Active for: {enabled}\n\nThe toggles below are the defaults for units without their own settings. Pick a unit to tune it or opt it out.",
+        "data": {
+          "smart_fan": "Dynamic fan control",
+          "enabled": "Automatic off",
+          "unit": "Unit"
+        },
+        "data_description": {
+          "smart_fan": "Sets the fan speed from how far the room is from the setpoint, quietest at the setpoint and highest at the full speed distance. Adds a Dynamic fan mode to the climate entity; choosing any other speed hands control back.",
+          "enabled": "Powers the unit off once the room is past the setpoint, so the indoor fan stops instead of running at setpoint, and powers it back on in the same mode when the room drifts back.",
+          "unit": "Optional. Opens that unit's settings after saving the defaults."
+        }
+      },
+      "fan_park_unit": {
+        "title": "Smart control",
+        "description": "Unit {unit}. A remote temperature sensor is recommended, because the unit's own reading is unreliable while its fan is slow or stopped.",
+        "sections": {
+          "fan": {
+            "name": "Dynamic fan control",
+            "description": "Sets the fan speed from how far the room is from the setpoint: the quietest speed at the setpoint, the highest at the full speed distance.",
+            "data": {
+              "smart_fan": "Dynamic fan control",
+              "full_speed_at": "Full speed at",
+              "fan_hysteresis": "Step down hysteresis",
+              "fan_hold": "Minimum time between changes"
+            },
+            "data_description": {
+              "smart_fan": "Adds a Dynamic fan mode to the climate entity. Choosing it hands the speed to Home Assistant; choosing any other speed hands it back.",
+              "full_speed_at": "Distance from the setpoint at which the highest speed is used.",
+              "fan_hysteresis": "How far past a speed band edge the room must get before the speed steps down.",
+              "fan_hold": "The fan speed changes at most once in this time."
+            }
+          },
+          "auto_off": {
+            "name": "Automatic off",
+            "description": "Powers the unit off once the room has passed the setpoint by the off margin, and back on when it drifts past the restart margin. To stop the unit, turn it off from Home Assistant: an off from the remote cannot be seen while the unit is held off, and it would be restarted later.",
+            "data": {
+              "enabled": "Automatic off",
+              "off_margin": "Off margin",
+              "restart_margin": "Restart margin",
+              "dwell": "Off delay",
+              "idle_dwell": "Off delay when idle",
+              "min_on": "Minimum on time",
+              "min_off": "Minimum off time"
+            },
+            "data_description": {
+              "off_margin": "How far past the setpoint the room must be before the unit is powered off.",
+              "restart_margin": "How far the room may drift back past the setpoint before the unit is powered on again.",
+              "dwell": "How long the room must stay past the off margin.",
+              "idle_dwell": "Used instead while the unit reports standby or a stopped compressor (0x06), if shorter.",
+              "min_on": "The unit runs at least this long after it is powered on.",
+              "min_off": "The unit stays off at least this long.",
+              "enabled": "Powers the unit off once the room is past the setpoint, so the indoor fan stops instead of running at setpoint, and powers it back on in the same mode when the room drifts back."
+            }
+          }
+        }
+      },
       "credentials": {
         "title": "Unit credentials",
         "menu_options": {
@@ -294,7 +353,8 @@
     },
     "abort": {
       "no_units": "No units with local credentials are stored.",
-      "not_loaded": "The entry must be loaded for this action."
+      "not_loaded": "The entry must be loaded for this action.",
+      "no_devices": "No units are available."
     }
   },
   "selector": {
@@ -328,6 +388,17 @@
     }
   },
   "entity": {
+    "climate": {
+      "kumo": {
+        "state_attributes": {
+          "fan_mode": {
+            "state": {
+              "dynamic": "Dynamic"
+            }
+          }
+        }
+      }
+    },
     "sensor": {
       "wifi_rssi": {
         "name": "Wi-Fi signal"
