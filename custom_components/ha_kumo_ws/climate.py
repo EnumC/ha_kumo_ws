@@ -17,6 +17,7 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .action import unit_action
 from .cn105_task import fresh_telemetry
 from .const import CONF_TARGET_TEMP_STEP, DOMAIN, new_device_signal
 from .coordinator import KumoDeviceCoordinator
@@ -33,7 +34,7 @@ from .pykumo2.domain.commands import (
     SetVane,
 )
 from .pykumo2.domain.enums import FanSpeed, HvacMode, VaneDirection
-from .pykumo2.domain.state import Cn105Telemetry, DeviceState
+from .pykumo2.domain.state import DeviceState
 
 PARALLEL_UPDATES = 0
 
@@ -45,32 +46,6 @@ TO_HA: dict[HvacMode, HVACMode] = {
     HvacMode.VENT: HVACMode.FAN_ONLY,
 }
 FROM_HA: dict[HVACMode, HvacMode] = {ha: mode for mode, ha in TO_HA.items()}
-_ACTIONS = {
-    HvacMode.HEAT: HVACAction.HEATING,
-    HvacMode.COOL: HVACAction.COOLING,
-    HvacMode.DRY: HVACAction.DRYING,
-    HvacMode.VENT: HVACAction.FAN,
-}
-_AUTO_SUB_MODES = {"AUTO_COOL": HvacMode.COOL, "AUTO_HEAT": HvacMode.HEAT}
-
-
-def _cn105_action(state: DeviceState, telemetry: Cn105Telemetry) -> HVACAction | None:
-    """Action from fresh CN105 telemetry; None falls back to the status heuristic."""
-    sub_mode = telemetry.sub_mode
-    if sub_mode == "DEFROST":
-        return HVACAction.DEFROSTING
-    if state.mode is HvacMode.VENT:
-        return HVACAction.FAN
-    if sub_mode in ("PREHEAT", "WARMUP"):
-        return HVACAction.PREHEATING
-    if sub_mode in ("STANDBY", "OFF") or telemetry.operating is False:
-        return HVACAction.IDLE
-    if not telemetry.operating:
-        return None
-    mode: HvacMode | None = state.mode
-    if mode is HvacMode.AUTO:
-        mode = state.auto_active or _AUTO_SUB_MODES.get(telemetry.auto_sub_mode or "")
-    return None if mode is None else _ACTIONS.get(mode)
 
 
 async def async_setup_entry(
@@ -151,21 +126,7 @@ class KumoClimate(KumoEntity, ClimateEntity):
 
     @property
     def hvac_action(self) -> HVACAction | None:
-        state = self.state_data
-        if state.power is None:
-            return None
-        if not state.power:
-            return HVACAction.OFF
-        if state.defrost:
-            return HVACAction.DEFROSTING
-        telemetry = fresh_telemetry(self.coordinator)
-        if telemetry is not None and (action := _cn105_action(state, telemetry)) is not None:
-            return action
-        if state.standby:
-            return HVACAction.IDLE
-        if state.mode is HvacMode.AUTO:
-            return _ACTIONS.get(state.auto_active, HVACAction.IDLE) if state.auto_active else None
-        return None if state.mode is None else _ACTIONS.get(state.mode)
+        return unit_action(self.state_data, fresh_telemetry(self.coordinator))
 
     @property
     def supported_features(self) -> ClimateEntityFeature:
