@@ -115,6 +115,18 @@
           "username": "Username (email)",
           "password": "Password"
         }
+      },
+      "smart_control": {
+        "title": "Smart control",
+        "description": "Applies to all units with default settings. Each unit can be tuned or opted out later in the integration options under Smart control.",
+        "data": {
+          "smart_fan": "Dynamic fan control",
+          "enabled": "Automatic off"
+        },
+        "data_description": {
+          "smart_fan": "Sets the fan speed from how far the room is from the setpoint, quietest at the setpoint and highest at the full speed distance. Adds a Dynamic fan mode to the climate entity; choosing any other speed hands control back.",
+          "enabled": "Powers the unit off once the room is past the setpoint, so the indoor fan stops instead of running at setpoint, and powers it back on in the same mode when the room drifts back."
+        }
       }
     },
     "progress": {

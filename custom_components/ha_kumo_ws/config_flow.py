@@ -5,7 +5,7 @@ import hashlib
 import ipaddress
 import logging
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import replace
 from typing import Any
 
@@ -266,6 +266,8 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
         self._decode_errors: list[str] = []
         self._cidrs: list[str] = []
         self._cn105: dict[str, Any] = {}
+        self._control: dict[str, bool] = {}
+        self._after_control: Callable[[], Awaitable[ConfigFlowResult]] | None = None
         self._addresses: dict[str, str] = {}
         self._missing: dict[str, str] = {}
         self._fetch_failed = False
@@ -330,6 +332,7 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
         options = {
             **DEFAULT_OPTIONS,
             **self._cn105,
+            CONF_FP_DEFAULTS: self._control,
             CONF_CONNECTION_MODE: mode,
             CONF_CIDRS: self._cidrs,
         }
@@ -477,17 +480,42 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
                 },
             )
         if not any(_usable(unit) for unit in self._units.values()):
-            return await self._async_create_local_entry()
+            return await self._async_ask_control(self._async_create_local_entry)
         return await self.async_step_cn105()
 
     async def async_step_cn105(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Opt in to CN105 telemetry; offered only with usable local credentials."""
         if user_input is None:
             return self.async_show_form(
-                step_id="cn105", data_schema=_cn105_schema(), last_step=True
+                step_id="cn105", data_schema=_cn105_schema(), last_step=False
             )
         self._cn105 = _cn105_options(user_input)
-        return await self._async_create_local_entry()
+        return await self._async_ask_control(self._async_create_local_entry)
+
+    async def _async_ask_control(
+        self, then: Callable[[], Awaitable[ConfigFlowResult]]
+    ) -> ConfigFlowResult:
+        self._after_control = then
+        return await self.async_step_smart_control()
+
+    async def async_step_smart_control(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Dynamic fan control and automatic off for all units; each unit can be tuned later."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="smart_control", data_schema=_control_defaults_schema(), last_step=True
+            )
+        self._control = _control_defaults(user_input)
+        assert self._after_control is not None
+        return await self._after_control()
+
+    async def _async_create_cloud_entry(self) -> ConfigFlowResult:
+        await self._async_disable_legacy()
+        return self._create_entry(SetupMethod.CLOUD_WS, "cloud_only")
+
+    async def _async_create_fetch_entry(self) -> ConfigFlowResult:
+        return self._create_entry(SetupMethod.CLOUD_FETCH, "auto")
 
     async def _async_create_local_entry(self) -> ConfigFlowResult:
         """Write the Store first, then create the entry."""
@@ -545,8 +573,7 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
                 return await self.async_step_fetch_credentials()
             if self._method is SetupMethod.LOCAL_BACKUP:
                 return await self.async_step_discover()
-            await self._async_disable_legacy()
-            return self._create_entry(SetupMethod.CLOUD_WS, "cloud_only")
+            return await self._async_ask_control(self._async_create_cloud_entry)
         schema = vol.Schema(
             {vol.Optional(CONF_SITE_IDS, default=list(self._sites)): cv.multi_select(self._sites)}
         )
@@ -599,7 +626,7 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="fetch_aborted")
             if self._units:
                 return await self.async_step_discover()
-            return self._create_entry(SetupMethod.CLOUD_FETCH, "auto")
+            return await self._async_ask_control(self._async_create_fetch_entry)
         schema = vol.Schema(
             {
                 vol.Required(CONF_ACTION, default="retry"): SelectSelector(
