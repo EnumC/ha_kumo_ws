@@ -46,7 +46,7 @@ Alternatively, add this repo manually in HACS:
 - Exposes RSSI, error codes, serial number, and model number for each device.
 
 ## Smart control
-Setup asks whether to turn on dynamic fan control and automatic off for all units. Afterwards, the integration options under "Smart control" change these all-units defaults, and picking a unit tunes it or opts it out. Both features work on cloud and local entries in Heat, Cool and Auto. A Home Assistant temperature sensor mapped as the unit's remote temperature source is used when set; otherwise the unit's room temperature is used.
+Setup asks whether to turn on dynamic fan control and automatic off for all units. Afterwards, the integration options under "Smart control" change these all-units defaults, and picking a unit tunes it or opts it out. "Use all-units defaults" on a unit's page clears its own settings so it follows the defaults again. Both features work on cloud and local entries in Heat, Cool and Auto. A Home Assistant temperature sensor mapped as the unit's remote temperature source is used when set; otherwise the unit's room temperature is used.
 
 ### Dynamic fan control
 - When enabled, the climate entity gets a "Dynamic" fan mode. Picking it lets the integration set the fan speed; picking any other speed hands control back to you.
@@ -57,6 +57,7 @@ Setup asks whether to turn on dynamic fan control and automatic off for all unit
 ### Automatic off
 - Mitsubishi units keep the indoor fan running after the room reaches the setpoint, and there is no fan-off command. When enabled, the unit is powered off once the room has passed the setpoint by the off margin for the dwell time, and powered back on in the same mode once it drifts back past the restart margin.
 - While held off, the climate entity keeps showing the intended mode with action Idle.
+- The hold survives Home Assistant restarts. If the mapped temperature sensor stays unavailable for 15 minutes, the unit is powered back on.
 - Turning the unit off or changing the mode from Home Assistant, or powering it on externally, cancels the hold. Turn the unit off from Home Assistant rather than the remote: an off from the remote cannot be seen while the unit is already held off.
 
 ### Options
