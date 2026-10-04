@@ -26,6 +26,7 @@ from .repairs import async_setup_repairs
 from .smart_control import async_remove_records
 from .storage import async_remove_store
 
+RETIRED_BINARY_SENSORS = ("_defrost", "_standby")
 _LOGGER = logging.getLogger(__name__)
 
 ENTRY_PLATFORMS = [*PLATFORMS, Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SELECT]
@@ -57,6 +58,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: KumoConfigEntry) -> bool
         ) from err
     entry.runtime_data = hub
     _sync_cn105_entities(hass, entry)
+    _remove_retired_entities(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, ENTRY_PLATFORMS)
     async_setup_repairs(hass, entry)
     return True
@@ -78,6 +80,15 @@ def _sync_cn105_entities(hass: HomeAssistant, entry: KumoConfigEntry) -> None:
             registry.async_update_entity(
                 entity.entity_id, disabled_by=er.RegistryEntryDisabler.INTEGRATION
             )
+
+
+@callback
+def _remove_retired_entities(hass: HomeAssistant, entry: KumoConfigEntry) -> None:
+    """Defrost and standby binary sensors are covered by the climate HVAC action."""
+    registry = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if entity.domain == "binary_sensor" and entity.unique_id.endswith(RETIRED_BINARY_SENSORS):
+            registry.async_remove(entity.entity_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: KumoConfigEntry) -> bool:

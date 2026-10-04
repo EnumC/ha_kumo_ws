@@ -517,12 +517,6 @@
       "filter_dirty": {
         "name": "Filter"
       },
-      "defrost": {
-        "name": "Defrost"
-      },
-      "standby": {
-        "name": "Standby"
-      },
       "compressor_running": {
         "name": "Compressor"
       },

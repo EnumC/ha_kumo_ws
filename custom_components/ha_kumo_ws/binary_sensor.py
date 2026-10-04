@@ -38,16 +38,6 @@ BINARY_SENSORS: tuple[KumoBinarySensorDescription, ...] = (
         is_on_fn=lambda c: c.data.filter_dirty,
     ),
     KumoBinarySensorDescription(
-        key="defrost",
-        translation_key="defrost",
-        is_on_fn=lambda c: c.data.defrost,
-    ),
-    KumoBinarySensorDescription(
-        key="standby",
-        translation_key="standby",
-        is_on_fn=lambda c: c.data.standby,
-    ),
-    KumoBinarySensorDescription(
         key="compressor_running",
         translation_key="compressor_running",
         device_class=BinarySensorDeviceClass.RUNNING,
