@@ -78,6 +78,11 @@ Setup asks whether to turn on dynamic fan control and automatic off for all unit
 
 Temperature options are shown in your Home Assistant unit.
 
+## Remote temperature sensor
+A Home Assistant temperature sensor can be mapped to a unit under "Remote temperature" in the integration options (local credentials required).
+- With "Manage the temperature source" on, the unit is switched to the sensor and back to its previous source when the sensor is unavailable for the unavailable timeout (default 30 min) or the mapping is removed. If the unit drops the setting on its own (adapter reset), it is switched back.
+- The unit is only switched to the sensor while the sensor is reporting. "Stale after" is derived from the sensor's recorded history (1.5 times its longest reporting gap over the last day, 5 to 30 min); the options page shows the derived value and accepts a custom one.
+
 ## HVAC action
 | Unit state | hvac_action |
 |---|---|
