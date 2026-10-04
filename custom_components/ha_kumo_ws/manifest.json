@@ -1,6 +1,9 @@
 {
   "domain": "ha_kumo_ws",
   "name": "Mitsubishi Comfort (WS)",
+  "after_dependencies": [
+    "recorder"
+  ],
   "codeowners": [
     "@EnumC"
   ],

@@ -70,7 +70,10 @@ from .const import (
     CONF_REMOTE_TEMP,
     CONF_RT_ENTITY,
     CONF_RT_INTERVAL,
+    CONF_RT_LOST_AFTER,
     CONF_RT_MANAGE_SOURCE,
+    CONF_RT_STALE_AFTER,
+    CONF_RT_STALE_AUTO,
     CONF_SETUP_METHOD,
     CONF_SITE_IDS,
     CONF_SOCKET_IDLE_DISCONNECT,
@@ -79,6 +82,7 @@ from .const import (
     DEFAULT_CN105_CODES,
     DEFAULT_OPTIONS,
     DEFAULT_RT_INTERVAL,
+    DEFAULT_RT_LOST_AFTER,
     DOMAIN,
     FP_LIMITS,
     FP_MINUTES,
@@ -87,6 +91,8 @@ from .const import (
     MAX_POLL_INTERVAL,
     MIN_CN105_INTERVAL,
     MIN_POLL_INTERVAL,
+    RT_STALE_MAX,
+    RT_STALE_MIN,
     TARGET_TEMP_STEPS,
 )
 from .legacy_import import LegacySetup, async_detect, mask_username
@@ -101,6 +107,7 @@ from .pykumo2.credentials.provider import CloudCredentialProvider, FetchResult
 from .pykumo2.credentials.service import CredentialService, RefreshResult
 from .pykumo2.domain.enums import SetupMethod
 from .pykumo2.errors import AuthenticationError, KumoError
+from .remote_temp import async_longest_report_gap, auto_stale_after
 from .smart_control import ControlOptions
 from .storage import async_load_service, async_save_units
 
@@ -1127,12 +1134,21 @@ class KumoOptionsFlow(OptionsFlowWithReload):
                     CONF_RT_ENTITY: entity_id,
                     CONF_RT_INTERVAL: int(user_input[CONF_RT_INTERVAL]),
                     CONF_RT_MANAGE_SOURCE: bool(user_input[CONF_RT_MANAGE_SOURCE]),
+                    CONF_RT_LOST_AFTER: round(float(user_input[CONF_RT_LOST_AFTER]) * 60),
                 }
+                if not user_input[CONF_RT_STALE_AUTO]:
+                    mapping[self._serial][CONF_RT_STALE_AFTER] = round(
+                        float(user_input[CONF_RT_STALE_AFTER]) * 60
+                    )
             else:
                 mapping.pop(self._serial, None)
             return self.async_create_entry(data={**current, CONF_REMOTE_TEMP: mapping})
         existing = mapping.get(self._serial, {})
         labels = await self._async_unit_labels()
+        gap = None
+        if entity_id := existing.get(CONF_RT_ENTITY):
+            gap = await async_longest_report_gap(self.hass, entity_id)
+        auto = auto_stale_after(gap)
         schema = vol.Schema(
             {
                 vol.Optional(CONF_RT_ENTITY): EntitySelector(
@@ -1142,17 +1158,27 @@ class KumoOptionsFlow(OptionsFlowWithReload):
                 ),
                 vol.Required(CONF_RT_INTERVAL): _seconds(5, 300),
                 vol.Required(CONF_RT_MANAGE_SOURCE): BooleanSelector(),
+                vol.Required(CONF_RT_STALE_AUTO): BooleanSelector(),
+                vol.Required(CONF_RT_STALE_AFTER): _minutes(RT_STALE_MIN // 60, RT_STALE_MAX // 60),
+                vol.Required(CONF_RT_LOST_AFTER): _minutes(1, 120),
             }
         )
         suggested = {
             CONF_RT_ENTITY: existing.get(CONF_RT_ENTITY),
             CONF_RT_INTERVAL: existing.get(CONF_RT_INTERVAL, DEFAULT_RT_INTERVAL),
             CONF_RT_MANAGE_SOURCE: existing.get(CONF_RT_MANAGE_SOURCE, True),
+            CONF_RT_STALE_AUTO: CONF_RT_STALE_AFTER not in existing,
+            CONF_RT_STALE_AFTER: round(existing.get(CONF_RT_STALE_AFTER, auto) / 60),
+            CONF_RT_LOST_AFTER: round(existing.get(CONF_RT_LOST_AFTER, DEFAULT_RT_LOST_AFTER) / 60),
         }
         return self.async_show_form(
             step_id="remote_temp_unit",
             data_schema=self.add_suggested_values_to_schema(schema, suggested),
-            description_placeholders={"unit": labels.get(self._serial, self._serial)},
+            description_placeholders={
+                "unit": labels.get(self._serial, self._serial),
+                "gap": "unknown" if gap is None else f"{gap / 60:.0f} min",
+                "auto": f"{auto / 60:.0f} min",
+            },
         )
 
     async def async_step_fan_park(
@@ -1417,6 +1443,18 @@ def _control_value(key: str, value: Any, unit: str) -> Any:
             TemperatureDeltaConverter.convert(float(value), unit, UnitOfTemperature.CELSIUS), 2
         )
     return round(float(value) * 60) if key in FP_MINUTES else round(float(value))
+
+
+def _minutes(minimum: int, maximum: int) -> NumberSelector:
+    return NumberSelector(
+        NumberSelectorConfig(
+            min=minimum,
+            max=maximum,
+            step=1,
+            unit_of_measurement="min",
+            mode=NumberSelectorMode.BOX,
+        )
+    )
 
 
 def _seconds(minimum: int, maximum: int) -> NumberSelector:

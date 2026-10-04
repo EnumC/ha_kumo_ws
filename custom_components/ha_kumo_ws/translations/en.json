@@ -241,15 +241,21 @@
       },
       "remote_temp_unit": {
         "title": "Remote temperature sensor",
-        "description": "Unit {unit}. Clear the sensor to remove the mapping.",
+        "description": "Unit {unit}. Clear the sensor to remove the mapping.\n\nLongest reporting gap of the mapped sensor over the last day: {gap}. Automatic stale after: {auto}.",
         "data": {
           "entity_id": "Temperature sensor",
           "interval": "Send interval",
-          "manage_source": "Manage the temperature source"
+          "manage_source": "Manage the temperature source",
+          "stale_auto": "Automatic stale after",
+          "stale_after": "Stale after",
+          "lost_after": "Unavailable timeout"
         },
         "data_description": {
           "interval": "How often the temperature is sent to the unit when it does not change.",
-          "manage_source": "Switch the unit to the remote temperature and restore its previous source when the sensor is unavailable or the mapping is removed."
+          "manage_source": "Switch the unit to the remote temperature and restore its previous source when the sensor is unavailable or the mapping is removed.",
+          "stale_auto": "Derive the stale threshold from the sensor's reporting history (1.5 times its longest gap, 5 to 30 minutes). Turn off to use the value below.",
+          "stale_after": "Custom stale threshold. The unit is switched to the remote temperature only if the sensor has reported within this time.",
+          "lost_after": "How long the sensor may be unavailable before the unit goes back to its previous temperature source."
         }
       },
       "fan_park": {

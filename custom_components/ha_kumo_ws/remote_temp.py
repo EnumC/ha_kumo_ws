@@ -21,9 +21,10 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
+from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import TemperatureConverter
 
-from .const import DOMAIN
+from .const import DOMAIN, RT_STALE_MAX, RT_STALE_MIN
 from .coordinator import KumoDeviceCoordinator
 from .pykumo2.domain.commands import InjectRoomTemp, SetTempSource
 from .pykumo2.domain.enums import TempSource
@@ -32,8 +33,11 @@ from .repairs import ISSUE_REMOTE_TEMP_LOST, async_clear_unit_issue, async_raise
 _LOGGER = logging.getLogger(__name__)
 
 DEBOUNCE_S = 5.0
-LOST_AFTER_S = 300.0
 MIN_INTERVAL_S = 5
+HISTORY_S = 86400
+DERIVE_INTERVAL_S = 21600
+MIN_GAPS = 5
+STALE_FACTOR = 1.5
 _UNITS = {
     UnitOfTemperature.CELSIUS: UnitOfTemperature.CELSIUS,
     "C": UnitOfTemperature.CELSIUS,
@@ -58,6 +62,45 @@ def state_celsius(state: State | None) -> float | None:
     return TemperatureConverter.convert(value, unit, UnitOfTemperature.CELSIUS)
 
 
+def longest_report_gap(states: list[State]) -> float | None:
+    """Longest seconds between consecutive usable reports; None without enough samples."""
+    gaps: list[float] = []
+    previous: State | None = None
+    for state in states:
+        if state_celsius(state) is None:
+            previous = None
+            continue
+        if previous is not None:
+            gaps.append((state.last_updated - previous.last_reported).total_seconds())
+        previous = state
+    return max(gaps) if len(gaps) >= MIN_GAPS else None
+
+
+def auto_stale_after(gap: float | None) -> float:
+    """Stale threshold from the longest reporting gap, within 5 to 30 minutes."""
+    if gap is None:
+        return RT_STALE_MAX
+    return min(max(gap * STALE_FACTOR, RT_STALE_MIN), RT_STALE_MAX)
+
+
+async def async_longest_report_gap(hass: HomeAssistant, entity_id: str) -> float | None:
+    """Longest reporting gap of entity_id over the last day, from the recorder."""
+    if "recorder" not in hass.config.components:
+        return None
+    from homeassistant.components.recorder import history
+    from homeassistant.helpers.recorder import get_instance
+
+    start = dt_util.utcnow() - timedelta(seconds=HISTORY_S)
+    try:
+        states = await get_instance(hass).async_add_executor_job(
+            history.state_changes_during_period, hass, start, None, entity_id
+        )
+    except Exception:
+        _LOGGER.debug("No history for %s", entity_id, exc_info=True)
+        return None
+    return longest_report_gap(states.get(entity_id, []))
+
+
 class RemoteTempFeeder:
     """Injects the mapped sensor on change (debounced) and on a heartbeat."""
 
@@ -73,6 +116,8 @@ class RemoteTempFeeder:
         entity_id: str,
         interval: float,
         manage_source: bool,
+        stale_after: float | None,
+        lost_after: float,
     ) -> None:
         self._hass = hass
         self._entry = entry
@@ -80,6 +125,9 @@ class RemoteTempFeeder:
         self.entity_id = entity_id
         self._interval = max(float(interval), MIN_INTERVAL_S)
         self._manage_source = manage_source
+        self._auto_stale = stale_after is None
+        self._stale_after = timedelta(seconds=RT_STALE_MAX if stale_after is None else stale_after)
+        self._lost_after = lost_after
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
         self._unsubs: list[Callable[[], None]] = []
@@ -111,6 +159,16 @@ class RemoteTempFeeder:
                 cancel_on_shutdown=True,
             )
         )
+        if self._auto_stale:
+            self._unsubs.append(
+                async_track_time_interval(
+                    self._hass,
+                    self._on_derive,
+                    timedelta(seconds=DERIVE_INTERVAL_S),
+                    cancel_on_shutdown=True,
+                )
+            )
+            self._spawn(self._async_derive_stale_after(), "derive")
         if self._value() is None:
             self._start_lost_timer()
         else:
@@ -132,6 +190,24 @@ class RemoteTempFeeder:
 
     def _value(self) -> float | None:
         return state_celsius(self._hass.states.get(self.entity_id))
+
+    @property
+    def stale_after(self) -> float:
+        """Seconds without a report before the sensor counts as stale."""
+        return self._stale_after.total_seconds()
+
+    @callback
+    def _on_derive(self, _now: datetime) -> None:
+        self._spawn(self._async_derive_stale_after(), "derive")
+
+    async def _async_derive_stale_after(self) -> None:
+        gap = await async_longest_report_gap(self._hass, self.entity_id)
+        self._stale_after = timedelta(seconds=auto_stale_after(gap))
+
+    def _fresh(self) -> bool:
+        """The sensor reported within stale_after, even without a value change."""
+        state = self._hass.states.get(self.entity_id)
+        return state is not None and dt_util.utcnow() - state.last_reported <= self._stale_after
 
     def _spawn(self, coro: Coroutine[Any, Any, None], what: str) -> None:
         task = self._entry.async_create_background_task(
@@ -174,7 +250,7 @@ class RemoteTempFeeder:
         _LOGGER.warning(
             "Remote temperature sensor for %s unavailable for %d s",
             self._coordinator.serial,
-            LOST_AFTER_S,
+            self._lost_after,
         )
         if self._manage_source:
             async_raise_unit_issue(self._hass, ISSUE_REMOTE_TEMP_LOST, self._coordinator)
@@ -183,7 +259,7 @@ class RemoteTempFeeder:
     @callback
     def _start_lost_timer(self) -> None:
         if self._unsub_lost is None and not self._lost:
-            self._unsub_lost = async_call_later(self._hass, LOST_AFTER_S, self._lost_job)
+            self._unsub_lost = async_call_later(self._hass, self._lost_after, self._lost_job)
 
     @callback
     def _cancel_lost_timer(self) -> None:
@@ -210,6 +286,8 @@ class RemoteTempFeeder:
                 self._managed = False
             try:
                 if self._manage_source and not self._managed and not self._paused:
+                    if not self._fresh():
+                        return
                     await coordinator.async_execute(SetTempSource(TempSource.API))
                     self._managed = True
                     if current not in (None, TempSource.API, TempSource.UNSET):

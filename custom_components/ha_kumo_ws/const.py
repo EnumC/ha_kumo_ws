@@ -30,7 +30,13 @@ TARGET_TEMP_STEPS: Final = ("auto", "half", "whole")
 CONF_RT_ENTITY: Final = "entity_id"
 CONF_RT_INTERVAL: Final = "interval"
 CONF_RT_MANAGE_SOURCE: Final = "manage_source"
+CONF_RT_STALE_AFTER: Final = "stale_after"
+CONF_RT_STALE_AUTO: Final = "stale_auto"
+CONF_RT_LOST_AFTER: Final = "lost_after"
 DEFAULT_RT_INTERVAL: Final = 20
+DEFAULT_RT_LOST_AFTER: Final = 1800
+RT_STALE_MIN: Final = 300
+RT_STALE_MAX: Final = 1800
 
 CONF_FAN_PARK: Final = "fan_park"
 CONF_FP_DEFAULTS: Final = "fan_park_defaults"

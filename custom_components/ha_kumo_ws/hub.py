@@ -44,7 +44,9 @@ from .const import (
     CONF_REMOTE_TEMP,
     CONF_RT_ENTITY,
     CONF_RT_INTERVAL,
+    CONF_RT_LOST_AFTER,
     CONF_RT_MANAGE_SOURCE,
+    CONF_RT_STALE_AFTER,
     CONF_SETUP_METHOD,
     CONF_SITE_IDS,
     CONF_SOCKET_IDLE_DISCONNECT,
@@ -52,6 +54,7 @@ from .const import (
     DEFAULT_MODE_BY_METHOD,
     DEFAULT_OPTIONS,
     DEFAULT_RT_INTERVAL,
+    DEFAULT_RT_LOST_AFTER,
     DOMAIN,
     INVENTORY_REFRESH_S,
     MAX_POLL_INTERVAL,
@@ -327,6 +330,8 @@ class KumoHub:
                 entity_id=entity_id,
                 interval=float(mapping.get(CONF_RT_INTERVAL) or DEFAULT_RT_INTERVAL),
                 manage_source=bool(mapping.get(CONF_RT_MANAGE_SOURCE, True)),
+                stale_after=mapping.get(CONF_RT_STALE_AFTER),
+                lost_after=float(mapping.get(CONF_RT_LOST_AFTER) or DEFAULT_RT_LOST_AFTER),
             )
             self.feeders[serial] = feeder
             feeder.async_start()
