@@ -204,6 +204,10 @@ class RemoteTempFeeder:
             if celsius is None or self._lost or self._stopping or not coordinator.link_is_local:
                 return
             current = coordinator.data.temp_source
+            if self._manage_source and current is TempSource.UNSET:
+                # unset cannot be written, so the adapter lost the source (reset or reconnect).
+                self._paused = False
+                self._managed = False
             try:
                 if self._manage_source and not self._managed and not self._paused:
                     await coordinator.async_execute(SetTempSource(TempSource.API))
