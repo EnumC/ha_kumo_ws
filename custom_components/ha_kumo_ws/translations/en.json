@@ -12,7 +12,7 @@
       },
       "import_backup": {
         "title": "Import a credential backup",
-        "description": "Units are controlled on the local network only; no cloud login is used. A login can be added later with Reconfigure.\n\nSkipped entries: {skipped}",
+        "description": "Units are controlled on the local network only, and no cloud login is used. A login can be added later with Reconfigure.\n\nTo migrate from hass-kumo, open kumo_cache.json in the Home Assistant configuration folder, which is the folder that holds configuration.yaml (/config on Home Assistant OS). You can open it with the File editor or Studio Code Server add-on, or print it with `cat /config/kumo_cache.json` in the Terminal & SSH add-on. Copy the entire file into the field below. A pykumo or KumoJS kumo.cfg is imported the same way. It is in the folder where that tool was set up, which is often the same configuration folder.\n\nSkipped entries: {skipped}",
         "data": {
           "backup": "Backup JSON",
           "cidrs": "Subnets to scan"
@@ -74,7 +74,7 @@
       },
       "reconfigure_import": {
         "title": "Import a credential backup",
-        "description": "The cloud login is kept: units are then controlled locally, with Kumo Cloud as fallback (auto mode).\n\nSkipped entries: {skipped}",
+        "description": "The cloud login is kept. Units are then controlled locally, with Kumo Cloud as fallback (auto mode).\n\nTo migrate from hass-kumo, open kumo_cache.json in the Home Assistant configuration folder, which is the folder that holds configuration.yaml (/config on Home Assistant OS). You can open it with the File editor or Studio Code Server add-on, or print it with `cat /config/kumo_cache.json` in the Terminal & SSH add-on. Copy the entire file into the field below. A pykumo or KumoJS kumo.cfg is imported the same way. It is in the folder where that tool was set up, which is often the same configuration folder.\n\nSkipped entries: {skipped}",
         "data": {
           "backup": "Backup JSON",
           "cidrs": "Subnets to scan"
@@ -323,7 +323,7 @@
       },
       "import_credentials": {
         "title": "Import credentials",
-        "description": "Paste a backup, a hass-kumo kumo_cache.json or a pykumo kumo.cfg. Units are merged into the stored credentials and take effect without a reload.",
+        "description": "Paste a backup exported by this integration, a hass-kumo kumo_cache.json or a pykumo kumo.cfg. Units are merged into the stored credentials and take effect without a reload.\n\nTo migrate from hass-kumo, open kumo_cache.json in the Home Assistant configuration folder, which is the folder that holds configuration.yaml (/config on Home Assistant OS). You can open it with the File editor or Studio Code Server add-on, or print it with `cat /config/kumo_cache.json` in the Terminal & SSH add-on. Copy the entire file into the field below. A pykumo or KumoJS kumo.cfg is imported the same way. It is in the folder where that tool was set up, which is often the same configuration folder.",
         "data": {
           "backup": "Backup JSON"
         }
