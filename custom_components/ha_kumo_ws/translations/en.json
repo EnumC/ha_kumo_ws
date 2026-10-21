@@ -7,8 +7,7 @@
         "menu_options": {
           "cloud_ws": "Set up using cloud websocket only (Recommended)",
           "import_backup": "Set up using existing local unit credential backup",
-          "cloud_fetch": "Set up by fetching local unit credentials from cloud (currently broken)",
-          "import_pykumo": "Import existing Kumo (hass-kumo / pykumo) setup"
+          "cloud_fetch": "Set up by fetching local unit credentials from cloud (currently broken)"
         }
       },
       "import_backup": {
@@ -64,29 +63,6 @@
         "description": "Fetching local credentials from Kumo Cloud is currently broken. Credentials were fetched for {fetched} units. Missing: {missing}.\n\nRetry, continue (units without credentials are controlled through Kumo Cloud), or abort and use the backup import instead.",
         "data": {
           "action": "Next step"
-        }
-      },
-      "import_pykumo": {
-        "title": "Import existing Kumo setup",
-        "description": "- Files: {files}\n- hass-kumo entry: {entry}\n- Units with valid credentials: {unit_count} ({address_count} with an address)\n- Kumo Cloud account: {account}\n\nIf no unit credentials were found, the entry uses the cloud websocket only. kumo_cache.json and kumo.cfg are never changed.",
-        "data": {
-          "use_account": "Use the Kumo Cloud account",
-          "disable_source_entry": "Disable the hass-kumo entry"
-        },
-        "data_description": {
-          "use_account": "Adds cloud fallback (auto mode). Without it, units are controlled locally only.",
-          "disable_source_entry": "Running both integrations against the same units can conflict: each adapter accepts only a few connections and has a single CN105 reply buffer."
-        }
-      },
-      "pykumo_login": {
-        "title": "Kumo Cloud login failed",
-        "description": "The stored login for {username} did not work. Enter the current password, or continue without the account.",
-        "data": {
-          "password": "Password",
-          "skip_account": "Continue without the account"
-        },
-        "data_description": {
-          "password": "Leave empty to retry the stored password."
         }
       },
       "reauth_confirm": {
@@ -148,7 +124,6 @@
       "reauth_successful": "Signed in again.",
       "reconfigure_successful": "The entry was updated.",
       "not_kumo_device": "This device is not a known Kumo adapter.",
-      "no_pykumo_data": "No hass-kumo or pykumo unit credentials or account were found.",
       "fetch_aborted": "Setup aborted. Use the credential backup import instead.",
       "wrong_account": "Use the Kumo Cloud account this entry was set up with."
     }

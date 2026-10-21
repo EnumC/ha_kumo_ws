@@ -14,7 +14,6 @@ from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import (
     SOURCE_RECONFIGURE,
     ConfigEntry,
-    ConfigEntryDisabler,
     ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
@@ -95,7 +94,6 @@ from .const import (
     RT_STALE_MIN,
     TARGET_TEMP_STEPS,
 )
-from .legacy_import import LegacySetup, async_detect, mask_username
 from .pykumo2.clock import SystemClock
 from .pykumo2.cloud.budget import CloudCallLedger
 from .pykumo2.cloud.rest import CloudRestClient
@@ -121,9 +119,6 @@ CONF_ACTION = "action"
 CONF_UNIT = "unit"
 CONF_ADDRESS = "address"
 CONF_RESCAN = "rescan"
-CONF_USE_ACCOUNT = "use_account"
-CONF_DISABLE_SOURCE = "disable_source_entry"
-CONF_SKIP_ACCOUNT = "skip_account"
 
 MAX_SCAN_ADDRESSES = 1024
 MAX_SUMMARY_ITEMS = 10
@@ -266,8 +261,6 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._method = SetupMethod.CLOUD_WS
         self._login: dict[str, str] = {}
-        self._pending_login: dict[str, str] = {}
-        self._login_errors: dict[str, str] = {}
         self._sites: dict[str, str] = {}
         self._site_ids: list[str] = []
         self._units: dict[str, UnitCredentials] = {}
@@ -280,8 +273,6 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
         self._missing: dict[str, str] = {}
         self._fetch_failed = False
         self._task: asyncio.Task[Any] | None = None
-        self._legacy: LegacySetup | None = None
-        self._disable_legacy = False
 
     @staticmethod
     @callback
@@ -346,21 +337,11 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
         }
         return self.async_create_entry(title=title, data=data, options=options)
 
-    async def _async_disable_legacy(self) -> None:
-        """Disable the hass-kumo entry if asked; its files are never touched."""
-        entry = self._legacy.entry if self._legacy is not None else None
-        if self._disable_legacy and entry is not None and entry.disabled_by is None:
-            await self.hass.config_entries.async_set_disabled_by(
-                entry.entry_id, ConfigEntryDisabler.USER
-            )
-
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Pick a setup method."""
-        menu = ["cloud_ws", "import_backup", "cloud_fetch"]
-        self._legacy = await async_detect(self.hass)
-        if self._legacy.found:
-            menu.append("import_pykumo")
-        return self.async_show_menu(step_id="user", menu_options=menu)
+        return self.async_show_menu(
+            step_id="user", menu_options=["cloud_ws", "import_backup", "cloud_fetch"]
+        )
 
     async def async_step_import_backup(
         self, user_input: dict[str, Any] | None = None
@@ -519,7 +500,6 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
         return await self._after_control()
 
     async def _async_create_cloud_entry(self) -> ConfigFlowResult:
-        await self._async_disable_legacy()
         return self._create_entry(SetupMethod.CLOUD_WS, "cloud_only")
 
     async def _async_create_fetch_entry(self) -> ConfigFlowResult:
@@ -532,10 +512,7 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
         await async_save_units(self.hass, self.unique_id, units)
         if self._method is SetupMethod.CLOUD_FETCH:
             return self._create_entry(SetupMethod.CLOUD_FETCH, "auto")
-        await self._async_disable_legacy()
-        mode = "auto" if self._login else "local_only"
-        title = TITLE if self._login else TITLE_LOCAL
-        return self._create_entry(SetupMethod.LOCAL_BACKUP, mode, title=title)
+        return self._create_entry(SetupMethod.LOCAL_BACKUP, "local_only", title=TITLE_LOCAL)
 
     async def async_step_cloud_ws(
         self, user_input: dict[str, Any] | None = None
@@ -579,8 +556,6 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
             self._site_ids = list(user_input.get(CONF_SITE_IDS) or self._sites)
             if self._method is SetupMethod.CLOUD_FETCH:
                 return await self.async_step_fetch_credentials()
-            if self._method is SetupMethod.LOCAL_BACKUP:
-                return await self.async_step_discover()
             return await self._async_ask_control(self._async_create_cloud_entry)
         schema = vol.Schema(
             {vol.Optional(CONF_SITE_IDS, default=list(self._sites)): cv.multi_select(self._sites)}
@@ -652,97 +627,6 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "fetched": str(len(self._units)),
                 "missing": _summarize(missing),
-            },
-        )
-
-    async def async_step_import_pykumo(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Summary of what was found, then import it."""
-        if user_input is None or self._legacy is None:
-            self._legacy = await async_detect(self.hass)
-        legacy = self._legacy
-        if not (legacy.units or legacy.has_account):
-            return self.async_abort(reason="no_pykumo_data")
-        if user_input is not None:
-            self._disable_legacy = bool(user_input.get(CONF_DISABLE_SOURCE))
-            self._units = {unit.serial: unit for unit in legacy.units}
-            self._decode_errors = list(legacy.errors)
-            if user_input.get(CONF_USE_ACCOUNT) and legacy.has_account:
-                assert legacy.username is not None and legacy.password is not None
-                self._method = SetupMethod.LOCAL_BACKUP if self._units else SetupMethod.CLOUD_WS
-                login = {CONF_USERNAME: legacy.username, CONF_PASSWORD: legacy.password}
-                return await self._async_pykumo_login(login)
-            return await self._async_pykumo_local()
-        schema: dict[vol.Marker, Any] = {}
-        if legacy.has_account:
-            schema[vol.Required(CONF_USE_ACCOUNT, default=True)] = BooleanSelector()
-        if legacy.entry is not None:
-            schema[vol.Required(CONF_DISABLE_SOURCE, default=True)] = BooleanSelector()
-        entry = "-"
-        if legacy.entry is not None:
-            entry = legacy.entry.title
-            if legacy.entry_count > 1:
-                entry += f" (1 of {legacy.entry_count})"
-        return self.async_show_form(
-            step_id="import_pykumo",
-            data_schema=vol.Schema(schema),
-            description_placeholders={
-                "files": _summarize(legacy.files),
-                "entry": entry,
-                "unit_count": str(len(legacy.units)),
-                "address_count": str(sum(1 for unit in legacy.units if unit.address)),
-                "account": mask_username(legacy.username)
-                if legacy.has_account and legacy.username
-                else "-",
-            },
-        )
-
-    async def _async_pykumo_local(self) -> ConfigFlowResult:
-        """Import units without a cloud login."""
-        if not self._units:
-            return self.async_abort(reason="no_pykumo_data")
-        self._method = SetupMethod.LOCAL_BACKUP
-        self._login = {}
-        await self.async_set_unique_id(local_unique_id(self._units))
-        self._abort_if_unique_id_configured()
-        return await self.async_step_discover()
-
-    async def _async_pykumo_login(self, login: dict[str, str]) -> ConfigFlowResult:
-        await self.async_set_unique_id(login[CONF_USERNAME])
-        self._abort_if_unique_id_configured()
-        self._login_errors = await self._async_validate(login)
-        if self._login_errors:
-            self._pending_login = login
-            return await self.async_step_pykumo_login()
-        self._login = login
-        return await self.async_step_sites()
-
-    async def async_step_pykumo_login(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Stored login was rejected: new password, or continue without the account."""
-        errors = self._login_errors
-        if user_input is not None:
-            if user_input.get(CONF_SKIP_ACCOUNT):
-                return await self._async_pykumo_local()
-            login = {
-                CONF_USERNAME: self._pending_login[CONF_USERNAME],
-                CONF_PASSWORD: user_input.get(CONF_PASSWORD) or self._pending_login[CONF_PASSWORD],
-            }
-            return await self._async_pykumo_login(login)
-        schema = vol.Schema(
-            {
-                vol.Optional(CONF_PASSWORD): PASSWORD_SELECTOR,
-                vol.Required(CONF_SKIP_ACCOUNT, default=False): BooleanSelector(),
-            }
-        )
-        return self.async_show_form(
-            step_id="pykumo_login",
-            data_schema=schema,
-            errors=errors,
-            description_placeholders={
-                "username": mask_username(self._pending_login[CONF_USERNAME])
             },
         )
 
