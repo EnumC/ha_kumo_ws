@@ -74,16 +74,12 @@ class Capabilities:
     def has_swing(self) -> bool:
         return VaneDirection.SWING in self.vane_directions
 
-    def heat_range(self, mode: HvacMode | None) -> SetpointRange:
-        """Range for spHeat in mode; auto also honors the heat ceiling."""
-        if mode is HvacMode.AUTO:
-            return _intersect(self.setpoints.auto, self.setpoints.heat.high, high=True)
+    def heat_range(self, mode: HvacMode | None = None) -> SetpointRange:
+        """Range for spHeat."""
         return self.setpoints.heat
 
-    def cool_range(self, mode: HvacMode | None) -> SetpointRange:
-        """Range for spCool in mode; auto also honors the cool floor."""
-        if mode is HvacMode.AUTO:
-            return _intersect(self.setpoints.auto, self.setpoints.cool.low, high=False)
+    def cool_range(self, mode: HvacMode | None = None) -> SetpointRange:
+        """Range for spCool."""
         return self.setpoints.cool
 
     @classmethod
@@ -184,10 +180,6 @@ def _narrow(rng: SetpointRange, low: float | None, high: float | None) -> Setpoi
     new_low = max(rng.low, low) if low is not None else rng.low
     new_high = min(rng.high, high) if high is not None else rng.high
     return SetpointRange(new_low, new_high) if new_low <= new_high else rng
-
-
-def _intersect(rng: SetpointRange, bound: float, *, high: bool) -> SetpointRange:
-    return _narrow(rng, None, bound) if high else _narrow(rng, bound, None)
 
 
 def _limits(profile: Mapping[str, Any], overlay: Mapping[str, Any]) -> SetpointLimits:
