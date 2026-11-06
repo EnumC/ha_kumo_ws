@@ -87,14 +87,18 @@ class AsyncCn105Bus:
         expect_code: int | None = None,
         timeout: float = REPLY_TIMEOUT_SECONDS,  # noqa: ASYNC109
     ) -> bytes | None:
-        """Send one frame and poll until a matching reply arrives."""
+        """Send one frame and poll until a matching reply arrives or timeout elapses."""
         async with self._lock, self._client.cycle():
             if not await self._send(frame, id_byte):
                 return None
-            polls = max(1, int(timeout / POLL_INTERVAL_SECONDS))
-            for _ in range(polls):
-                await self._sleep(POLL_INTERVAL_SECONDS)
-                reply = await self._read()
+            deadline = self._clock.monotonic() + timeout
+            while (remaining := deadline - self._clock.monotonic()) > 0:
+                try:
+                    async with asyncio.timeout(remaining):
+                        await self._sleep(POLL_INTERVAL_SECONDS)
+                        reply = await self._read()
+                except TimeoutError:
+                    break
                 if reply is None or not valid_cn105_reply(reply):
                     continue
                 if expect_type is not None and reply[1] != expect_type:
