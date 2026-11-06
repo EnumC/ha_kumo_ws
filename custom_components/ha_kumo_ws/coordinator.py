@@ -227,7 +227,7 @@ class KumoDeviceCoordinator(DataUpdateCoordinator[DeviceState]):
         self._publish(self._merge(patch, self.holds.begin_read()))
 
     async def _async_update_data(self) -> DeviceState:
-        self.hub.async_check_cloud_auth()
+        self.hub.async_check_cloud_auth(self.serial)
         nodes = self._scheduler.due()
         try:
             async with self._poll_lock:

@@ -74,7 +74,7 @@ from .pykumo2.credentials.models import UnitCredentials
 from .pykumo2.credentials.provider import CloudCredentialProvider
 from .pykumo2.credentials.service import CredentialService
 from .pykumo2.domain.commands import CommandValidator
-from .pykumo2.domain.enums import ConnectionMode, SetupMethod
+from .pykumo2.domain.enums import ConnectionMode, LinkState, SetupMethod
 from .pykumo2.domain.state import StatePatch
 from .pykumo2.errors import AuthenticationError, KumoError
 from .pykumo2.local.client import LocalUnitClient
@@ -85,7 +85,6 @@ from .pykumo2.routing.health import HealthTracker
 from .pykumo2.routing.policy import RoutingPolicy
 from .pykumo2.routing.router import DeviceLink
 from .pykumo2.routing.session_manager import CloudLeaseManager
-from .pykumo2.transport import TransportKind
 from .remote_temp import (
     RemoteTempFeeder,
     SourceRecords,
@@ -459,20 +458,20 @@ class KumoHub:
         )
 
     def _cloud_required(self, serials: Iterable[str]) -> bool:
-        """Cloud is required unless every unit is currently routed locally."""
+        """Cloud is required unless every unit has a started local route."""
+        serials = tuple(serials)
+        return not serials or any(self._unit_needs_cloud(serial) for serial in serials)
+
+    def _unit_needs_cloud(self, serial: str) -> bool:
+        """True when the unit has no local route that can work or recover without a cloud login."""
         if self.method is SetupMethod.CLOUD_WS or self.policy.mode is ConnectionMode.CLOUD_ONLY:
             return True
-        local = self.local
-        serials = tuple(serials)
+        link = self.links.get(serial)
         return (
-            local is None
-            or not serials
-            or any(
-                not local.has_unit(serial)
-                or (link := self.links.get(serial)) is None
-                or link.active_transport is not TransportKind.LOCAL
-                for serial in serials
-            )
+            self.local is None
+            or not self.local.has_unit(serial)
+            or link is None
+            or link.state in (LinkState.AUTH_STALE, LinkState.NO_CREDENTIALS)
         )
 
     async def _async_load_inventory(self) -> _Inventory:
@@ -630,11 +629,11 @@ class KumoHub:
                     registry.async_update_device(entry.id, name=known.name, model=known.model)
 
     @callback
-    def async_check_cloud_auth(self) -> None:
-        """Called on each poll: a rejected login needs reauth only if cloud is required."""
+    def async_check_cloud_auth(self, serial: str) -> None:
+        """Called on each poll: a rejected login needs reauth only if this unit needs the cloud."""
         if self._stopping or self.tokens is None or not self.tokens.auth_failed:
             return
-        if self._cloud_required(self.devices):
+        if self._unit_needs_cloud(serial):
             raise ConfigEntryAuthFailed(
                 translation_domain=DOMAIN, translation_key="cloud_auth_failed"
             )
