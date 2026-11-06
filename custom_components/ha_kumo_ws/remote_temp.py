@@ -15,12 +15,13 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import Event, EventStateChangedData, HassJob, HomeAssistant, State, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
     async_track_time_interval,
 )
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import TemperatureConverter
 
@@ -38,6 +39,8 @@ HISTORY_S = 86400
 DERIVE_INTERVAL_S = 21600
 MIN_GAPS = 5
 STALE_FACTOR = 1.5
+RESTORE_RETRY_S = 60.0
+STORAGE_VERSION = 1
 _UNITS = {
     UnitOfTemperature.CELSIUS: UnitOfTemperature.CELSIUS,
     "C": UnitOfTemperature.CELSIUS,
@@ -60,6 +63,21 @@ def state_celsius(state: State | None) -> float | None:
     if unit is None or not math.isfinite(value):
         return None
     return TemperatureConverter.convert(value, unit, UnitOfTemperature.CELSIUS)
+
+
+def reported_within(state: State | None, seconds: float) -> bool:
+    """The state was reported within seconds, even without a value change."""
+    return state is not None and (dt_util.utcnow() - state.last_reported).total_seconds() <= seconds
+
+
+def fresh_celsius(state: State | None, stale_after: float) -> float | None:
+    """state_celsius of a state reported within stale_after seconds, else None."""
+    return state_celsius(state) if reported_within(state, stale_after) else None
+
+
+def default_stale_after(stale_after: float | None) -> float:
+    """Configured stale threshold, or the maximum until one is derived from history."""
+    return float(RT_STALE_MAX if stale_after is None else stale_after)
 
 
 def longest_report_gap(states: list[State]) -> float | None:
@@ -101,6 +119,85 @@ async def async_longest_report_gap(hass: HomeAssistant, entity_id: str) -> float
     return longest_report_gap(states.get(entity_id, []))
 
 
+def _store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    return Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}.temp_source", private=True)
+
+
+class SourceRecords:
+    """Units a feeder switched to tempSource=api and the source to restore, by serial."""
+
+    def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
+        self._store = _store(hass, entry_id)
+        self._data: dict[str, TempSource | None] = {}
+
+    async def async_load(self) -> None:
+        raw = await self._store.async_load() or {}
+        self._data = {
+            serial: TempSource.parse(record.get("previous"))
+            for serial, record in raw.items()
+            if isinstance(record, dict)
+        }
+
+    def pending(self, serial: str) -> bool:
+        return serial in self._data
+
+    def previous(self, serial: str) -> TempSource | None:
+        return self._data.get(serial)
+
+    def serials(self) -> set[str]:
+        return set(self._data)
+
+    async def async_set(self, serial: str, previous: TempSource | None) -> None:
+        if serial in self._data and self._data[serial] is previous:
+            return
+        self._data[serial] = previous
+        await self._async_save()
+
+    async def async_pop(self, serial: str) -> None:
+        if serial in self._data:
+            del self._data[serial]
+            await self._async_save()
+
+    async def _async_save(self) -> None:
+        await self._store.async_save(
+            {
+                serial: {"previous": None if source is None else source.value}
+                for serial, source in sorted(self._data.items())
+            }
+        )
+
+
+async def async_remove_sources(hass: HomeAssistant, entry_id: str) -> None:
+    """Delete the temperature source Store for entry_id."""
+    await _store(hass, entry_id).async_remove()
+
+
+async def async_restore_source(coordinator: KumoDeviceCoordinator, records: SourceRecords) -> None:
+    """The unit is left on api without a feeder: restore its source, retrying until done."""
+    serial = coordinator.serial
+    warned = False
+    while records.pending(serial):
+        current = coordinator.data.temp_source
+        if current is not None and current is not TempSource.API:
+            break
+        if current is TempSource.API:
+            try:
+                await coordinator.async_execute(
+                    SetTempSource(records.previous(serial) or TempSource.RETURNAIR)
+                )
+            except ServiceValidationError as err:
+                _LOGGER.warning("Could not restore temperature source for %s: %s", serial, err)
+                break
+            except HomeAssistantError as err:
+                if not warned:
+                    warned = True
+                    _LOGGER.warning("Could not restore temperature source for %s: %s", serial, err)
+            else:
+                break
+        await asyncio.sleep(RESTORE_RETRY_S)
+    await records.async_pop(serial)
+
+
 class RemoteTempFeeder:
     """Injects the mapped sensor on change (debounced) and on a heartbeat."""
 
@@ -112,6 +209,7 @@ class RemoteTempFeeder:
         hass: HomeAssistant,
         entry: ConfigEntry,
         coordinator: KumoDeviceCoordinator,
+        records: SourceRecords,
         *,
         entity_id: str,
         interval: float,
@@ -122,11 +220,12 @@ class RemoteTempFeeder:
         self._hass = hass
         self._entry = entry
         self._coordinator = coordinator
+        self._records = records
         self.entity_id = entity_id
         self._interval = max(float(interval), MIN_INTERVAL_S)
         self._manage_source = manage_source
         self._auto_stale = stale_after is None
-        self._stale_after = timedelta(seconds=RT_STALE_MAX if stale_after is None else stale_after)
+        self._stale_after = timedelta(seconds=default_stale_after(stale_after))
         self._lost_after = lost_after
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
@@ -135,7 +234,7 @@ class RemoteTempFeeder:
         self._unsub_lost: Callable[[], None] | None = None
         self._debounce_job = HassJob(self._on_debounce, cancel_on_shutdown=True)
         self._lost_job = HassJob(self._on_lost, cancel_on_shutdown=True)
-        self._previous: TempSource | None = None
+        self._previous = records.previous(coordinator.serial)
         self._managed = False
         self._paused = False
         self._lost = False
@@ -205,9 +304,13 @@ class RemoteTempFeeder:
         self._stale_after = timedelta(seconds=auto_stale_after(gap))
 
     def _fresh(self) -> bool:
-        """The sensor reported within stale_after, even without a value change."""
-        state = self._hass.states.get(self.entity_id)
-        return state is not None and dt_util.utcnow() - state.last_reported <= self._stale_after
+        return reported_within(self._hass.states.get(self.entity_id), self.stale_after)
+
+    def _pending(self) -> bool:
+        """A restore is owed: api was set this session, or by an earlier one and persisted."""
+        return self._managed or (
+            self._manage_source and self._records.pending(self._coordinator.serial)
+        )
 
     def _spawn(self, coro: Coroutine[Any, Any, None], what: str) -> None:
         task = self._entry.async_create_background_task(
@@ -238,7 +341,7 @@ class RemoteTempFeeder:
     def _on_heartbeat(self, _now: datetime) -> None:
         if self._lost:
             # Retry a restore that failed while the link was not local.
-            if self._managed:
+            if self._pending():
                 self._spawn(self._async_restore(), "restore")
             return
         self._spawn(self._async_inject(), "inject")
@@ -292,8 +395,9 @@ class RemoteTempFeeder:
                     self._managed = True
                     if current not in (None, TempSource.API, TempSource.UNSET):
                         self._previous = current
+                    await self._records.async_set(coordinator.serial, self._previous)
                 elif current is not TempSource.API:
-                    self._release()
+                    await self._async_release()
                     return
                 elif self._paused:
                     self._paused = False
@@ -304,10 +408,11 @@ class RemoteTempFeeder:
 
     async def _async_restore(self) -> None:
         async with self._lock:
-            if not self._managed:
+            current = self._coordinator.data.temp_source
+            if not self._pending() or current is None:
                 return
-            if self._coordinator.data.temp_source is not TempSource.API:
-                self._release()
+            if current is not TempSource.API:
+                await self._async_release()
                 return
             target = self._previous or TempSource.RETURNAIR
             try:
@@ -321,9 +426,11 @@ class RemoteTempFeeder:
                 return
             self._managed = False
             self._previous = None
+            await self._records.async_pop(self._coordinator.serial)
 
-    def _release(self) -> None:
+    async def _async_release(self) -> None:
         """Another source was chosen: stop managing it until api is reported again."""
         self._paused = self._manage_source
         self._managed = False
         self._previous = None
+        await self._records.async_pop(self._coordinator.serial)

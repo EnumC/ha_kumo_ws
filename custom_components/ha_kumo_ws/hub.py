@@ -86,7 +86,12 @@ from .pykumo2.routing.policy import RoutingPolicy
 from .pykumo2.routing.router import DeviceLink
 from .pykumo2.routing.session_manager import CloudLeaseManager
 from .pykumo2.transport import TransportKind
-from .remote_temp import RemoteTempFeeder
+from .remote_temp import (
+    RemoteTempFeeder,
+    SourceRecords,
+    async_restore_source,
+    default_stale_after,
+)
 from .smart_control import ControlOptions, ParkRecords, SmartController, async_release
 from .storage import HaCredentialRepository
 
@@ -128,6 +133,7 @@ class KumoHub:
         self.feeders: dict[str, RemoteTempFeeder] = {}
         self.controllers: dict[str, SmartController] = {}
         self.park_records = ParkRecords(hass, entry.entry_id)
+        self.source_records = SourceRecords(hass, entry.entry_id)
         self._stopping = False
         self._tasks: set[asyncio.Task[Any]] = set()
         self._unit_services_started = False
@@ -248,6 +254,7 @@ class KumoHub:
         if self.cloud is not None:
             self.cloud.set_listener(self._on_push)
         await self.park_records.async_load()
+        await self.source_records.async_load()
         inventory = await self._async_load_inventory()
         for device, seed in inventory.values():
             await self._async_add_device(device, seed)
@@ -258,6 +265,8 @@ class KumoHub:
             self._start_unit_services(serial)
         for serial in self.park_records.serials() - self.coordinators.keys():
             self.park_records.pop(serial)
+        for serial in self.source_records.serials() - self.coordinators.keys():
+            await self.source_records.async_pop(serial)
         if self.has_cloud:
             self._unsubs.append(
                 async_track_time_interval(
@@ -322,14 +331,22 @@ class KumoHub:
             self.cn105_pollers[serial] = poller
             poller.async_start()
         mapping = self.remote_temp_mapping(serial)
-        if (entity_id := mapping.get(CONF_RT_ENTITY)) and serial not in self.feeders:
+        entity_id = mapping.get(CONF_RT_ENTITY)
+        manage_source = bool(mapping.get(CONF_RT_MANAGE_SOURCE, True))
+        if self.source_records.pending(serial) and not (entity_id and manage_source):
+            self._spawn(
+                async_restore_source(coordinator, self.source_records),
+                f"{serial} temp source restore",
+            )
+        if entity_id and serial not in self.feeders:
             feeder = RemoteTempFeeder(
                 self.hass,
                 self.entry,
                 coordinator,
+                self.source_records,
                 entity_id=entity_id,
                 interval=float(mapping.get(CONF_RT_INTERVAL) or DEFAULT_RT_INTERVAL),
-                manage_source=bool(mapping.get(CONF_RT_MANAGE_SOURCE, True)),
+                manage_source=manage_source,
                 stale_after=mapping.get(CONF_RT_STALE_AFTER),
                 lost_after=float(mapping.get(CONF_RT_LOST_AFTER) or DEFAULT_RT_LOST_AFTER),
             )
@@ -367,6 +384,12 @@ class KumoHub:
         """Remote temperature options for serial; empty when unmapped."""
         mapping: Mapping[str, Any] = (self.options[CONF_REMOTE_TEMP] or {}).get(serial) or {}
         return mapping
+
+    def remote_stale_after(self, serial: str) -> float:
+        """Seconds without a report before the remote sensor of serial counts as stale."""
+        if (feeder := self.feeders.get(serial)) is not None:
+            return feeder.stale_after
+        return default_stale_after(self.remote_temp_mapping(serial).get(CONF_RT_STALE_AFTER))
 
     def async_create_task[T](self, coro: Coroutine[Any, Any, T], name: str) -> asyncio.Task[T]:
         """Create entry-owned work that is drained before transports close."""

@@ -36,7 +36,7 @@ from .coordinator import KumoDeviceCoordinator
 from .pykumo2.domain.commands import SetFanSpeed, SetMode, SetPower
 from .pykumo2.domain.enums import FanSpeed, HvacMode
 from .pykumo2.domain.state import DeviceState
-from .remote_temp import state_celsius
+from .remote_temp import fresh_celsius
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -463,7 +463,10 @@ class SmartController:
 
     def _temperature(self, state: DeviceState, now: float) -> float | None:
         if self.entity_id:
-            return state_celsius(self._hass.states.get(self.entity_id))
+            return fresh_celsius(
+                self._hass.states.get(self.entity_id),
+                self._coordinator.hub.remote_stale_after(self._serial),
+            )
         if state.updated_at is None or now - state.updated_at > STALE_S:
             return None
         return state.room_temp
@@ -472,7 +475,7 @@ class SmartController:
         if (temp := self._temperature(state, now)) is None:
             if not self.entity_id:
                 return True
-            # A sensor that has not loaded yet after a restart is not a lost sensor.
+            # A sensor that has not loaded yet after a restart, or just went stale, is not yet lost.
             if self._temp_lost_at is None:
                 self._temp_lost_at = now
             return now - self._temp_lost_at >= STALE_S
