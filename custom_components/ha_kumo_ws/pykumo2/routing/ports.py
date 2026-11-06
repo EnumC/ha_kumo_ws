@@ -16,7 +16,9 @@ if TYPE_CHECKING:
 class LocalPort(Transport, Protocol):
     """Local transport plus the probe and address hooks the router needs."""
 
-    async def async_probe(self, serial: str) -> bool: ...
+    async def async_probe(self, serial: str) -> bool:
+        """True when the unit answers; raises the typed LocalError on failure."""
+        ...
 
     def update_address(self, serial: str, address: str) -> None: ...
 

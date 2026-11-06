@@ -193,12 +193,8 @@ class LocalTransport:
             raise
 
     async def async_probe(self, serial: str) -> bool:
-        """True when a single status read succeeds. False on a local error."""
-        client = self._client(serial)
-        try:
-            await client.request(self._codec.query("status"))
-        except LocalError:
-            return False
+        """True when a single status read succeeds; raises the typed LocalError otherwise."""
+        await self._client(serial).request(self._codec.query("status"))
         return True
 
     async def async_close(self) -> None:
