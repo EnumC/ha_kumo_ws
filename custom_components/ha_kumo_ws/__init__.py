@@ -41,9 +41,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: KumoConfigEntry) -> bool
     hub = KumoHub(hass, entry)
     try:
         await hub.async_start()
-    except (ConfigEntryAuthFailed, ConfigEntryNotReady):
-        await hub.async_stop()
-        raise
     except AuthenticationError as err:
         await hub.async_stop()
         raise ConfigEntryAuthFailed(
@@ -56,11 +53,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: KumoConfigEntry) -> bool
             translation_key="cloud_unavailable",
             translation_placeholders={"error": type(err).__name__},
         ) from err
+    except BaseException:
+        await hub.async_stop()
+        raise
     entry.runtime_data = hub
-    _sync_cn105_entities(hass, entry)
-    _remove_retired_entities(hass, entry)
-    await hass.config_entries.async_forward_entry_setups(entry, ENTRY_PLATFORMS)
-    async_setup_repairs(hass, entry)
+    try:
+        _sync_cn105_entities(hass, entry)
+        _remove_retired_entities(hass, entry)
+        await hass.config_entries.async_forward_entry_setups(entry, ENTRY_PLATFORMS)
+        async_setup_repairs(hass, entry)
+    except BaseException:
+        await hub.async_stop()
+        raise
     return True
 
 
