@@ -16,17 +16,13 @@ This custom component has been updated and rewritten to use WebSocket for live u
 
 ### HACS (recommended)
 
-Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.
+Install the integration from the Home Assistant Community Store.
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=EnumC&repository=ha_kumo_ws&category=integration)
+[![Install the integration from the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=EnumC&repository=ha_kumo_ws&category=integration)
 
 Alternatively, add this repo manually in HACS: 
 
-- In HACS, click "Custom repositories" in the menu on the top right
-- Enter `https://github.com/EnumC/ha_kumo_ws` as the repository
-- Select "Integration" as the category
-- Click "Add"
-- Search for "Mitsubishi Comfort" in the HACS store and install.
+- In HACS, search for "Mitsubishi Comfort" in the HACS store and install.
 
 ### Setting up
 
@@ -46,7 +42,6 @@ Alternatively, add this repo manually in HACS:
 - Exposes RSSI, error codes, serial number, and model number for each device.
 
 ## Smart control
-Setup asks whether to turn on dynamic fan control and automatic off for all units. Afterwards, the integration options under "Smart control" change these all-units defaults, and picking a unit tunes it or opts it out. "Use all-units defaults" on a unit's page clears its own settings so it follows the defaults again. Both features work on cloud and local entries in Heat, Cool and Auto. A Home Assistant temperature sensor mapped as the unit's remote temperature source is used when set; otherwise the unit's room temperature is used.
 
 ### Dynamic fan control
 - When enabled, the climate entity gets a "Dynamic" fan mode. Picking it lets the integration set the fan speed; picking any other speed hands control back to you.
@@ -76,12 +71,11 @@ Setup asks whether to turn on dynamic fan control and automatic off for all unit
 | Minimum on time | 10 min | 0-60 min |
 | Minimum off time | 5 min | 3-60 min |
 
-Temperature options are shown in your Home Assistant unit.
 
 ## Remote temperature sensor
 A Home Assistant temperature sensor can be mapped to a unit under "Remote temperature" in the integration options (local credentials required).
 - With "Manage the temperature source" on, the unit is switched to the sensor and back to its previous source when the sensor is unavailable for the unavailable timeout (default 30 min) or the mapping is removed. If the unit drops the setting on its own (adapter reset), it is switched back.
-- The unit is only switched to the sensor while the sensor is reporting. "Stale after" is derived from the sensor's recorded history (1.5 times its longest reporting gap over the last day, 5 to 30 min); the options page shows the derived value and accepts a custom one.
+- The unit is only switched to the sensor while the sensor is reporting. "Stale after" is derived from the sensor's recorded history (1.5 times its longest reporting gap over the last day, 5 to 30 min); but the value can be overwritten with a custom stale timeout.
 
 ## HVAC action
 | Unit state | hvac_action |
