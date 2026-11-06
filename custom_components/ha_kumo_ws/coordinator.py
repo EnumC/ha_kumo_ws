@@ -255,8 +255,12 @@ class KumoDeviceCoordinator(DataUpdateCoordinator[DeviceState]):
             self._publish(dataclasses.replace(self.data, link_state=state))
 
     def _apply_interval(self, state: LinkState) -> None:
+        # Honor poll_interval even in CLOUD_ONLY mode (capped by CLOUD_BACKSTOP_TICK_S)
+        # so coordinator ticks and backstop checks are not delayed past the configured interval.
         if state is LinkState.CLOUD_ONLY:
-            self.update_interval = timedelta(seconds=CLOUD_BACKSTOP_TICK_S)
+            self.update_interval = min(
+                self._poll_interval, timedelta(seconds=CLOUD_BACKSTOP_TICK_S)
+            )
         else:
             self.update_interval = self._poll_interval
 
@@ -415,7 +419,10 @@ class KumoDeviceCoordinator(DataUpdateCoordinator[DeviceState]):
         attempted_local = self.link_is_local
         try:
             kind = await self.link.async_execute(cmd, state, caps=caps)
-        except (KumoError, ValueError) as err:
+        except Exception as err:
+            # Catch all exceptions (not just KumoError/ValueError) so an unexpected
+            # transport or runtime error cannot leave an in_flight hold with an
+            # infinite expiration (expires_at=inf) masking future polled state updates.
             sent_keys: set[str] = set()
             cause: BaseException | None = err
             seen: set[int] = set()
@@ -433,6 +440,11 @@ class KumoDeviceCoordinator(DataUpdateCoordinator[DeviceState]):
                     self.hass, self.async_request_refresh(), f"{DOMAIN} {self.serial} rollback"
                 )
             raise _command_error(err) from err
+        except BaseException:
+            # Ensure task cancellation also clears the in_flight hold token.
+            self._rollback(token, before)
+            self._schedule_hold_expiry()
+            raise
         self.holds.extend(self.serial, token, self._ttl(kind), self._clock.monotonic())
         if isinstance(cmd, RebootAdapter):
             self._scheduler.request_profile()

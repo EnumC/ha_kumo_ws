@@ -696,6 +696,10 @@ class KumoHub:
         serial = self.serial_for_mac(mac)
         if serial is None:
             return False
+        # Record the DHCP sighting on the address resolver so an in-progress or
+        # upcoming resolve probes this IP before running a full subnet scan.
+        if self.addresses is not None:
+            self.addresses.note_dhcp(serial, ip)
         unit = self.credentials.get(serial) if self.credentials is not None else None
         if self.credentials is None or unit is None:
             return True

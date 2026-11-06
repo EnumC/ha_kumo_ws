@@ -73,6 +73,10 @@ class CloudTransport:
         """Status from the site's zones; other nodes arrive by socket push only."""
         if "status" not in nodes:
             return self._patch({})
+        # Also ask the adapter over Socket.IO to push a fresh iuStatus (device_update)
+        # so that if the REST zone cache is stale or a socket push was missed, the
+        # adapter reports its live mode and temperatures directly.
+        await self._socket.request_status(serial)
         site_id = self._sites.get(serial)
         if site_id is None:
             raise CloudError(f"no site registered for {serial}")

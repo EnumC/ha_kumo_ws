@@ -31,6 +31,8 @@ BACKSTOP_INTERVAL = 900.0
 PROFILE_RETRY_S = 60.0
 PROFILE_RETRY_MAX_S = 3600.0
 AUTH_REFRESH_REASON = "auth_stale"
+# Indoor-unit status fields that prove a push carried live thermostat state.
+_STATUS_PUSH_KEYS = frozenset({"power", "mode", "sp_heat", "sp_cool", "room_temp"})
 
 type LinkListener = Callable[[LinkState], None]
 
@@ -148,7 +150,12 @@ class DeviceLink:
 
     def on_push(self, patch: StatePatch) -> StatePatch:
         """Record a socket push (resets the backstop) and hand it on."""
-        self._cloud_ref = self._clock.monotonic()
+        # Only reset the cloud backstop timer when the push carries indoor-unit
+        # status fields (e.g. device_update). Non-status events like adapter_update
+        # (RSSI/name) or device_status_v2 (connectivity) do not update mode or
+        # temperatures and must not postpone the backstop poll.
+        if patch.values.keys() & _STATUS_PUSH_KEYS:
+            self._cloud_ref = self._clock.monotonic()
         if "capabilities" in patch.values:
             self.need_profile = False
         return patch
@@ -192,12 +199,12 @@ class DeviceLink:
                 await self._credentials_arrived()
             return
         if self._auto and self._state in FALLBACK_STATES:
-            await self._probe()
+            await self._probe(immediate=True)
 
     async def async_on_address_changed(self) -> None:
         """Address updated (DHCP, option, rescan): probe now."""
         if self._auto and self._state in FALLBACK_STATES:
-            await self._probe()
+            await self._probe(immediate=True)
 
     async def async_drain(self) -> None:
         """Wait for background refresh/resolve tasks."""
@@ -315,9 +322,9 @@ class DeviceLink:
             return
         self.health.trip()
         self._set_state(LinkState.CLOUD_FALLBACK)
-        await self._probe()
+        await self._probe(immediate=True)
 
-    async def _probe(self) -> None:
+    async def _probe(self, *, immediate: bool = False) -> None:
         """Half-open probe; recovery switches back to local and starts the lease cooldown."""
         assert self._local is not None
         async with self._probe_lock:
@@ -330,10 +337,18 @@ class DeviceLink:
                 ok, err = False, exc
             if not ok:
                 self.health.record_failure(err)
-                if err is not None:
-                    self._enter(self._classify(err))
+                # Always re-enter the classified fallback state on a failed probe so
+                # ADDRESS_LOST re-triggers subnet resolution and AUTH_STALE re-triggers
+                # credential refresh (rate-limited by AddressResolver / CredentialService).
+                self._enter(self._classify(err))
                 return
-            self.health.record_success()
+            # When probing in response to newly arrived/refreshed credentials or a newly
+            # discovered IP address, close the circuit on the first verified read rather
+            # than waiting another backoff interval for a second probe.
+            if immediate:
+                self.health.reset()
+            else:
+                self.health.record_success()
             if self.health.is_open:
                 return
             self._set_state(LinkState.RECOVERING)
@@ -349,7 +364,7 @@ class DeviceLink:
         if result.error is not None or self.serial in result.refreshed:
             self.refresh_error = result.error
         if self.serial in result.refreshed and self._auto:
-            await self._probe()
+            await self._probe(immediate=True)
 
     async def _resolve(self) -> None:
         if self._addresses is None:
@@ -358,7 +373,7 @@ class DeviceLink:
         previous = unit.address if unit is not None else None
         address = await self._addresses.async_resolve(self.serial)
         if address and address != previous and self._auto:
-            await self._probe()
+            await self._probe(immediate=True)
 
     async def _ensure_lease(self) -> None:
         if self._leases is None:

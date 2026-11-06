@@ -193,12 +193,12 @@ class LocalTransport:
             raise
 
     async def async_probe(self, serial: str) -> bool:
-        """True when a single status read succeeds. False on a local error."""
+        """True when a single status read succeeds. Raises LocalError on failure."""
+        # Let LocalError propagate so DeviceLink._probe can classify the failure
+        # (e.g. LocalAuthError vs LocalTimeoutError/LocalConnectionError) and
+        # re-trigger subnet resolution or credential refresh on each failed probe.
         client = self._client(serial)
-        try:
-            await client.request(self._codec.query("status"))
-        except LocalError:
-            return False
+        await client.request(self._codec.query("status"))
         return True
 
     async def async_close(self) -> None:

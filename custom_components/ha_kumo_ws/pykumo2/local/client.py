@@ -227,7 +227,14 @@ class LocalUnitClient:
     ) -> dict[str, Any]:
         path_s = ".".join(path) if path else "-"
         response, last_error, should_reboot = await self._read_node(path, None, retries, path_s)
-        if not should_reboot and response is None:
+        # Do not fall back to per-attribute queries when the unit failed at the transport
+        # layer (timeout/connection error); otherwise a single unreachable poll makes 11
+        # extra attribute requests (22 timeouts) while holding the coordinator poll lock.
+        if (
+            not should_reboot
+            and response is None
+            and not isinstance(last_error, LocalTimeoutError | LocalConnectionError)
+        ):
             response, last_error, should_reboot = await self._read_attributes(
                 path, needed, retries, path_s, last_error
             )

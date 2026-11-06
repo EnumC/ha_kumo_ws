@@ -104,8 +104,14 @@ class CloudSocketSession:
     @property
     def reconnecting(self) -> bool:
         """True while built-in or owned reconnection is in progress."""
+        if self._builtin_reconnect:
+            # Verify python-socketio's internal reconnect task has not terminated;
+            # otherwise _builtin_reconnect would stay True forever if it gave up.
+            builtin_task = getattr(self._client, "_reconnect_task", None)
+            if builtin_task is None or not builtin_task.done():
+                return True
         task = self._reconnect_task
-        return self._builtin_reconnect or (task is not None and not task.done())
+        return task is not None and not task.done()
 
     def set_listener(self, cb: SocketListener | None) -> None:
         self._listener = cb
@@ -140,6 +146,17 @@ class CloudSocketSession:
             if not self._leases and self._client is not None:
                 self._cancel_idle()
                 self._idle_task = asyncio.create_task(self._idle_disconnect())
+
+    async def request_status(self, serial: str) -> None:
+        """Ask a leased unit's adapter to push fresh iuStatus over the socket."""
+        async with self._lock:
+            if serial not in self.leased:
+                return
+            self._pending_force.setdefault(serial, set()).add("iuStatus")
+            if self._connected and serial in self._subscribed:
+                await self._force(serial, ("iuStatus",))
+            elif not self._connected and not self.reconnecting:
+                self._schedule_reconnect()
 
     async def async_close(self) -> None:
         """Drop all leases and disconnect; acquire() reconnects later."""
