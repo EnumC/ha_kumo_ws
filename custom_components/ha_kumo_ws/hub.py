@@ -75,7 +75,7 @@ from .pykumo2.credentials.provider import CloudCredentialProvider
 from .pykumo2.credentials.service import CredentialService
 from .pykumo2.domain.commands import CommandValidator
 from .pykumo2.domain.enums import ConnectionMode, LinkState, SetupMethod
-from .pykumo2.domain.state import StatePatch
+from .pykumo2.domain.state import DeviceState, StatePatch
 from .pykumo2.errors import AuthenticationError, KumoError
 from .pykumo2.local.client import LocalUnitClient
 from .pykumo2.local.codec import LocalCodec
@@ -85,6 +85,7 @@ from .pykumo2.routing.health import HealthTracker
 from .pykumo2.routing.policy import RoutingPolicy
 from .pykumo2.routing.router import DeviceLink
 from .pykumo2.routing.session_manager import CloudLeaseManager
+from .remote_steer import SetpointSteerer, SteerOptions, SteerRecords, async_restore_targets
 from .remote_temp import (
     RemoteTempFeeder,
     SourceRecords,
@@ -131,8 +132,10 @@ class KumoHub:
         self.cn105_pollers: dict[str, Cn105Poller] = {}
         self.feeders: dict[str, RemoteTempFeeder] = {}
         self.controllers: dict[str, SmartController] = {}
+        self.steerers: dict[str, SetpointSteerer] = {}
         self.park_records = ParkRecords(hass, entry.entry_id)
         self.source_records = SourceRecords(hass, entry.entry_id)
+        self.steer_records = SteerRecords(hass, entry.entry_id)
         self._stopping = False
         self._tasks: set[asyncio.Task[Any]] = set()
         self._unit_services_started = False
@@ -254,6 +257,7 @@ class KumoHub:
             self.cloud.set_listener(self._on_push)
         await self.park_records.async_load()
         await self.source_records.async_load()
+        await self.steer_records.async_load()
         inventory = await self._async_load_inventory()
         for device, seed in inventory.values():
             await self._async_add_device(device, seed)
@@ -266,6 +270,8 @@ class KumoHub:
             self.park_records.pop(serial)
         for serial in self.source_records.serials() - self.coordinators.keys():
             await self.source_records.async_pop(serial)
+        for serial in self.steer_records.serials() - self.coordinators.keys():
+            await self.steer_records.async_pop(serial)
         if self.has_cloud:
             self._unsubs.append(
                 async_track_time_interval(
@@ -286,11 +292,15 @@ class KumoHub:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
-        # Controllers stop first and stay parked; feeder restores run before coordinators close.
+        # Controllers stop first and stay parked; steerer and feeder restores run before
+        # coordinators close.
         self._unit_services_started = False
         for controller in self.controllers.values():
             await controller.async_stop()
         self.controllers.clear()
+        for steerer in self.steerers.values():
+            await steerer.async_stop()
+        self.steerers.clear()
         for poller in self.cn105_pollers.values():
             await poller.async_stop()
         for feeder in self.feeders.values():
@@ -311,26 +321,46 @@ class KumoHub:
             await self.local.async_close()
 
     def _start_unit_services(self, serial: str) -> None:
-        """Smart control; CN105 reads and the remote temperature feeder on local-capable entries."""
+        """Steerer or feeder first so smart control sees virtual targets, then CN105 reads."""
         if self._stopping:
             return
         coordinator = self.coordinators[serial]
+        self._start_remote_temp(coordinator)
         self._start_control(coordinator)
-        if self.local is None:
-            return
-        if self.cn105_enabled and serial not in self.cn105_pollers:
-            poller = Cn105Poller(
-                self.hass,
-                self.entry,
-                coordinator,
-                self.local,
-                codes=self.cn105_codes,
-                interval=self.cn105_interval,
-            )
-            self.cn105_pollers[serial] = poller
-            poller.async_start()
+        self._start_cn105(coordinator)
+
+    def _wants_steering(self, serial: str) -> bool:
+        """The unit has no local route, so a remote sensor steers the setpoint over the cloud."""
+        return self.policy.has_cloud and (self.local is None or not self.local.has_unit(serial))
+
+    def _start_remote_temp(self, coordinator: KumoDeviceCoordinator) -> None:
+        serial = coordinator.serial
         mapping = self.remote_temp_mapping(serial)
         entity_id = mapping.get(CONF_RT_ENTITY)
+        lost_after = float(mapping.get(CONF_RT_LOST_AFTER) or DEFAULT_RT_LOST_AFTER)
+        steer = self._wants_steering(serial)
+        if self.steer_records.pending(serial) and not (steer and entity_id):
+            self._spawn(
+                async_restore_targets(coordinator, self.steer_records),
+                f"{serial} setpoint restore",
+            )
+        if steer:
+            if entity_id and serial not in self.steerers:
+                steerer = SetpointSteerer(
+                    self.hass,
+                    self.entry,
+                    coordinator,
+                    self.steer_records,
+                    entity_id=entity_id,
+                    options=SteerOptions.from_options(mapping),
+                    stale_after=mapping.get(CONF_RT_STALE_AFTER),
+                    lost_after=lost_after,
+                )
+                self.steerers[serial] = steerer
+                steerer.async_start()
+            return
+        if self.local is None:
+            return
         manage_source = bool(mapping.get(CONF_RT_MANAGE_SOURCE, True))
         if self.source_records.pending(serial) and not (entity_id and manage_source):
             self._spawn(
@@ -347,10 +377,34 @@ class KumoHub:
                 interval=float(mapping.get(CONF_RT_INTERVAL) or DEFAULT_RT_INTERVAL),
                 manage_source=manage_source,
                 stale_after=mapping.get(CONF_RT_STALE_AFTER),
-                lost_after=float(mapping.get(CONF_RT_LOST_AFTER) or DEFAULT_RT_LOST_AFTER),
+                lost_after=lost_after,
             )
             self.feeders[serial] = feeder
             feeder.async_start()
+
+    def _start_cn105(self, coordinator: KumoDeviceCoordinator) -> None:
+        serial = coordinator.serial
+        if self.local is None or not self.cn105_enabled or serial in self.cn105_pollers:
+            return
+        poller = Cn105Poller(
+            self.hass,
+            self.entry,
+            coordinator,
+            self.local,
+            codes=self.cn105_codes,
+            interval=self.cn105_interval,
+        )
+        self.cn105_pollers[serial] = poller
+        poller.async_start()
+
+    async def _async_switch_to_feeder(self, serial: str) -> None:
+        """A steered unit gained local credentials: restore its setpoint and feed it instead."""
+        if (steerer := self.steerers.get(serial)) is None:
+            return
+        await steerer.async_stop()
+        self.steerers.pop(serial, None)
+        if self._unit_services_started and not self._stopping and serial in self.coordinators:
+            self._start_remote_temp(self.coordinators[serial])
 
     def _start_control(self, coordinator: KumoDeviceCoordinator) -> None:
         serial = coordinator.serial
@@ -388,7 +442,19 @@ class KumoHub:
         """Seconds without a report before the remote sensor of serial counts as stale."""
         if (feeder := self.feeders.get(serial)) is not None:
             return feeder.stale_after
+        if (steerer := self.steerers.get(serial)) is not None:
+            return steerer.stale_after
         return default_stale_after(self.remote_temp_mapping(serial).get(CONF_RT_STALE_AFTER))
+
+    def targets(self, serial: str, state: DeviceState) -> tuple[float | None, float | None]:
+        """Virtual heat and cool targets while steering, else the unit setpoints."""
+        if (steerer := self.steerers.get(serial)) is not None:
+            heat, cool = steerer.targets
+            return (
+                state.sp_heat if heat is None else heat,
+                state.sp_cool if cool is None else cool,
+            )
+        return state.sp_heat, state.sp_cool
 
     def async_create_task[T](self, coro: Coroutine[Any, Any, T], name: str) -> asyncio.Task[T]:
         """Create entry-owned work that is drained before transports close."""
@@ -676,6 +742,8 @@ class KumoHub:
             if known is None or not self.local.has_unit(serial):
                 self.local.add_unit(serial, unit)
                 creds_changed, address_changed = True, False
+                if serial in self.steerers:
+                    self._spawn(self._async_switch_to_feeder(serial), f"{serial} feeder switch")
             else:
                 creds_changed, address_changed = known[0] != pair, known[1] != address
                 if creds_changed:

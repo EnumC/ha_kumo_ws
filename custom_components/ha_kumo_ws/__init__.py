@@ -22,6 +22,7 @@ from .const import (
 )
 from .hub import KumoConfigEntry, KumoHub
 from .pykumo2.errors import AuthenticationError, KumoError
+from .remote_steer import async_remove_records as async_remove_steer_records
 from .remote_temp import async_remove_sources
 from .repairs import async_setup_repairs
 from .smart_control import async_remove_records
@@ -105,10 +106,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: KumoConfigEntry) -> boo
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Delete the credential, smart control and temperature source Stores."""
+    """Delete the credential, smart control, temperature source and steering Stores."""
     await async_remove_store(hass, entry.unique_id or entry.entry_id)
     await async_remove_records(hass, entry.entry_id)
     await async_remove_sources(hass, entry.entry_id)
+    await async_remove_steer_records(hass, entry.entry_id)
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

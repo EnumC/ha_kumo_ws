@@ -38,6 +38,37 @@ DEFAULT_RT_LOST_AFTER: Final = 1800
 RT_STALE_MIN: Final = 300
 RT_STALE_MAX: Final = 1800
 
+CONF_RS_SECTION: Final = "steering"
+CONF_RS_BIAS_TAU: Final = "bias_tau"
+CONF_RS_TRIM: Final = "trim"
+CONF_RS_TRIM_TIME: Final = "trim_time"
+CONF_RS_MAX_TRIM: Final = "max_trim"
+CONF_RS_MIN_WRITE: Final = "min_write"
+CONF_RS_WARMUP: Final = "warmup"
+CONF_RS_STEADY_BAND: Final = "steady_band"
+RS_KEYS: Final = (
+    CONF_RS_TRIM,
+    CONF_RS_BIAS_TAU,
+    CONF_RS_TRIM_TIME,
+    CONF_RS_MAX_TRIM,
+    CONF_RS_MIN_WRITE,
+    CONF_RS_WARMUP,
+    CONF_RS_STEADY_BAND,
+)
+# (default, min, max): temperature deltas in C, durations in seconds.
+RS_LIMITS: Final[dict[str, tuple[float, float, float]]] = {
+    CONF_RS_BIAS_TAU: (1200, 300, 7200),
+    CONF_RS_TRIM_TIME: (7200, 1800, 43200),
+    CONF_RS_MAX_TRIM: (2.0, 0.0, 4.0),
+    CONF_RS_MIN_WRITE: (300, 120, 1800),
+    CONF_RS_WARMUP: (600, 0, 1800),
+    CONF_RS_STEADY_BAND: (1.0, 0.5, 3.0),
+}
+RS_TEMPERATURES: Final = frozenset({CONF_RS_MAX_TRIM, CONF_RS_STEADY_BAND})
+RS_MINUTES: Final = frozenset(
+    {CONF_RS_BIAS_TAU, CONF_RS_TRIM_TIME, CONF_RS_MIN_WRITE, CONF_RS_WARMUP}
+)
+
 CONF_FAN_PARK: Final = "fan_park"
 CONF_FP_DEFAULTS: Final = "fan_park_defaults"
 CONF_FP_USE_DEFAULTS: Final = "use_defaults"
