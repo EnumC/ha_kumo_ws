@@ -211,6 +211,7 @@ class KumoDeviceCoordinator(DataUpdateCoordinator[DeviceState]):
         clean = StatePatch(source=patch.source, values=values, at=patch.at)
         state = apply_patch(self.data, clean, self.holds, self._clock.monotonic(), since)
         self._schedule_hold_expiry()
+        self._recheck_if_contradicted()
         return state
 
     @callback
@@ -463,7 +464,19 @@ class KumoDeviceCoordinator(DataUpdateCoordinator[DeviceState]):
                 self.config_entry.async_create_background_task(
                     self.hass, self.async_request_refresh(), f"{DOMAIN} hold expiry"
                 )
+        self._recheck_if_contradicted()
         self._schedule_hold_expiry()
+
+    @callback
+    def _recheck_if_contradicted(self) -> None:
+        """Read the unit again after a hold expired having only masked other values."""
+        if not self.holds.pop_recheck(self.serial) or self._closing:
+            return
+        if not self.link_is_local:
+            self.link.request_backstop()
+        self.config_entry.async_create_background_task(
+            self.hass, self.async_request_refresh(), f"{DOMAIN} {self.serial} recheck"
+        )
 
     def _rollback(self, token: int, before: Mapping[str, Any]) -> None:
         released = self.holds.rollback_token(self.serial, token, before, self._clock.monotonic())

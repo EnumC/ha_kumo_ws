@@ -153,6 +153,10 @@ class DeviceLink:
             self.need_profile = False
         return patch
 
+    def request_backstop(self) -> None:
+        """Make the next cloud poll fetch status now."""
+        self._cloud_ref = self._clock.monotonic() - self._backstop
+
     def validate(
         self, command: Command, state: DeviceState, caps: Capabilities | None = None
     ) -> Command:

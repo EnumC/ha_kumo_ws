@@ -15,6 +15,7 @@ class _Hold:
     confirmed: bool = False
     conflict: bool = False
     latest: Any = None
+    contradicted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +34,7 @@ class HoldTable:
         self._writes: dict[str, dict[str, _Write]] = {}
         self._seq = 0
         self._revoked: set[int] = set()
+        self._recheck: set[str] = set()
 
     def begin_read(self) -> int:
         """Generation for a read starting now; pass it to filter as ``since``."""
@@ -89,18 +91,31 @@ class HoldTable:
                 result[key] = value
             elif value == hold.value:
                 assert held is not None
-                held[key] = replace(hold, confirmed=True)
+                held[key] = replace(hold, confirmed=True, contradicted=False)
                 result[key] = value
             elif hold.confirmed:
                 assert held is not None
                 held[key] = replace(hold, conflict=True, latest=value)
+            else:
+                assert held is not None
+                held[key] = replace(hold, contradicted=True)
         if held is not None and not held:
             del self._holds[serial]
         return result
 
     def conflict_deadline(self, serial: str) -> float | None:
-        deadlines = [h.expires_at for h in self._holds.get(serial, {}).values() if h.conflict]
+        deadlines = [
+            h.expires_at
+            for h in self._holds.get(serial, {}).values()
+            if h.conflict or h.contradicted
+        ]
         return min(deadlines) if deadlines else None
+
+    def pop_recheck(self, serial: str) -> bool:
+        """True once after a hold expired having dropped values it never saw confirmed."""
+        found = serial in self._recheck
+        self._recheck.discard(serial)
+        return found
 
     def expire(self, serial: str, now: float) -> dict[str, Any]:
         """Release expired holds and return their latest confirmed conflicts."""
@@ -110,6 +125,8 @@ class HoldTable:
             if hold.expires_at <= now:
                 if hold.conflict:
                     values[key] = hold.latest
+                elif hold.contradicted:
+                    self._recheck.add(serial)
                 del held[key]
         return values
 
@@ -172,3 +189,4 @@ class HoldTable:
     def clear(self, serial: str) -> None:
         self._holds.pop(serial, None)
         self._writes.pop(serial, None)
+        self._recheck.discard(serial)
