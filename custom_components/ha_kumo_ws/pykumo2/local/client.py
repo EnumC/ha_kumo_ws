@@ -39,6 +39,7 @@ _HEADERS = {
     "Content-Type": "application/json",
 }
 _REBOOT_INTERVAL = 30 * 60
+_REJECTION_RETRY_DELAY = 0.5
 _SYSTEM_CLOCK = SystemClock()
 
 
@@ -118,6 +119,7 @@ class LocalUnitClient:
         timeouts: tuple[float, float] = (CONNECT_TIMEOUT, READ_TIMEOUT),
         clock: Clock = _SYSTEM_CLOCK,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        retry_rejected: bool = True,
     ) -> None:
         self._address = address
         self._creds = creds
@@ -125,6 +127,7 @@ class LocalUnitClient:
         self._timeouts = timeouts
         self._clock = clock
         self._sleep = sleep
+        self._retry_rejected = retry_rejected
         self._lock = asyncio.Lock()
         self._cycle_depth = 0
         self._session: ClientSession | None = None
@@ -163,21 +166,31 @@ class LocalUnitClient:
             raise LocalConnectionError("address_not_set")
         path = _node_path(body)
         async with self._lock:
-            last: LocalError | None = None
-            for attempt in range(2):
+            transport_retried = False
+            rejection_retried = False
+            while True:
                 try:
                     payload = await self._exchange(body)
                 except (LocalTimeoutError, LocalConnectionError) as exc:
-                    last = exc
                     await self._close_session()
-                    self._log(path, exc, final=attempt == 1)
-                    if attempt == 0:
-                        continue
-                    raise
+                    self._log(path, exc, final=transport_retried)
+                    if transport_retried:
+                        raise
+                    transport_retried = True
+                    continue
                 except _MalformedResponse as exc:
                     await self._close_session()
                     self._log(path, exc, final=True)
                     raise
+                except LocalAuthError:
+                    # The adapter also rejects valid signatures at random; one retry clears it.
+                    await self._close_if_idle()
+                    _LOGGER.debug("adapter rejected request signature path=%s", path)
+                    if rejection_retried or not self._retry_rejected:
+                        raise
+                    rejection_retried = True
+                    await self._sleep(_REJECTION_RETRY_DELAY)
+                    continue
                 except LocalError as exc:
                     await self._close_if_idle()
                     self._log(path, exc, final=True)
@@ -188,11 +201,14 @@ class LocalUnitClient:
                 else:
                     await self._close_if_idle()
                     return payload
-            raise last if last is not None else LocalConnectionError("connect_failed")
 
     async def send(self, body: bytes) -> dict[str, Any]:
         """PUT a pre-encoded body and return the JSON object."""
-        return await self.request(body)
+        try:
+            return await self.request(body)
+        except LocalAuthError:
+            _LOGGER.warning("adapter rejected command signature twice path=%s", _node_path(body))
+            raise
 
     async def write(self, path: Sequence[str], values: Mapping[str, Any]) -> None:
         """PUT ``values`` at ``path`` as one ``{"c": ...}`` body."""
@@ -263,9 +279,10 @@ class LocalUnitClient:
                 return None, exc, True
             except LocalAuthError as exc:
                 last_error = exc
-                self._log(path_s, exc, final=False)
-                await self._sleep(1.0)
                 tries += 1
+                if tries >= retries:
+                    _LOGGER.warning("adapter rejected every signed try path=%s", path_s)
+                await self._sleep(1.0)
             except LocalError as exc:
                 return None, exc, False
         return None, last_error, False

@@ -111,7 +111,7 @@ async def signed_probe(
     timeout: float = 3.0,  # noqa: ASYNC109
 ) -> bool:
     """True when a signed status read returns an object that has ``r``."""
-    client = LocalUnitClient(address, creds, timeouts=(timeout, timeout))
+    client = LocalUnitClient(address, creds, timeouts=(timeout, timeout), retry_rejected=False)
     try:
         await client.request(_STATUS_BODY)
     except (LocalError, ValueError):
