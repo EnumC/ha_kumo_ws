@@ -487,6 +487,12 @@
       },
       "compressor_frequency": {
         "name": "Compressor frequency"
+      },
+      "unit_room_temperature": {
+        "name": "Unit room temperature"
+      },
+      "setpoint_shift": {
+        "name": "Setpoint shift"
       }
     },
     "number": {
@@ -603,7 +609,7 @@
     },
     "remote_temp_source_lost": {
       "title": "Remote temperature lost for {name}",
-      "description": "The Home Assistant temperature sensor mapped to {name} became unavailable, so the unit went back to its previous temperature source. Feeding resumes and this issue clears once the sensor reports again."
+      "description": "The Home Assistant temperature sensor mapped to {name} became unavailable, so the unit returned to its own temperature source or setpoint. Home Assistant resumes using the sensor and this issue clears once the sensor reports again."
     }
   }
 }

@@ -35,6 +35,7 @@ from .pykumo2.domain.commands import (
 )
 from .pykumo2.domain.enums import FanSpeed, HvacMode, VaneDirection
 from .pykumo2.domain.state import DeviceState
+from .remote_steer import SetpointSteerer
 from .smart_control import SMART_FAN_MODE, SmartController
 
 PARALLEL_UPDATES = 0
@@ -120,6 +121,13 @@ class KumoClimate(KumoEntity, ClimateEntity):
         return self.coordinator.hub.controllers.get(self.coordinator.serial)
 
     @property
+    def _steerer(self) -> SetpointSteerer | None:
+        return self.coordinator.hub.steerers.get(self.coordinator.serial)
+
+    def _targets(self) -> tuple[float | None, float | None]:
+        return self.coordinator.hub.targets(self.coordinator.serial, self.state_data)
+
+    @property
     def _parked_mode(self) -> HvacMode | None:
         controller = self._controller
         return None if controller is None else controller.parked_mode
@@ -177,6 +185,8 @@ class KumoClimate(KumoEntity, ClimateEntity):
 
     @property
     def current_temperature(self) -> float | None:
+        if (steerer := self._steerer) is not None and (remote := steerer.remote_temp) is not None:
+            return remote
         return self.state_data.room_temp
 
     @property
@@ -185,22 +195,22 @@ class KumoClimate(KumoEntity, ClimateEntity):
 
     @property
     def target_temperature(self) -> float | None:
-        state, mode = self.state_data, self._mode
+        (heat, cool), mode = self._targets(), self._mode
         if mode is HvacMode.HEAT:
-            return state.sp_heat
+            return heat
         if mode is HvacMode.COOL or (
             mode is HvacMode.DRY and self.coordinator.capabilities.uses_setpoint_in_dry
         ):
-            return state.sp_cool
+            return cool
         return None
 
     @property
     def target_temperature_low(self) -> float | None:
-        return self.state_data.sp_heat if self._mode is HvacMode.AUTO else None
+        return self._targets()[0] if self._mode is HvacMode.AUTO else None
 
     @property
     def target_temperature_high(self) -> float | None:
-        return self.state_data.sp_cool if self._mode is HvacMode.AUTO else None
+        return self._targets()[1] if self._mode is HvacMode.AUTO else None
 
     def _range(self) -> SetpointRange:
         caps, mode = self.coordinator.capabilities, self._mode
@@ -278,6 +288,12 @@ class KumoClimate(KumoEntity, ClimateEntity):
         parked = self._parked_mode
         if parked is not None and hvac_mode is not None and FROM_HA.get(hvac_mode) is parked:
             hvac_mode = None
+        steerer = self._steerer
+        if hvac_mode is None and steerer is not None:
+            mode = self._parked_mode or self.state_data.mode
+            cmd = _setpoints(mode, temp, low, high)
+            await steerer.async_set_targets(cmd.heat, cmd.cool, mode=mode)
+            return
         if hvac_mode is None:
             await self.coordinator.async_execute(
                 lambda state: _setpoints(self._parked_mode or state.mode, temp, low, high),
@@ -286,6 +302,12 @@ class KumoClimate(KumoEntity, ClimateEntity):
             return
         mode_cmd = self._validated(hvac_mode)
         self._cancel_park()
+        if steerer is not None:
+            off = hvac_mode == HVACMode.OFF
+            mode = (parked or self.state_data.mode) if off else FROM_HA[hvac_mode]
+            cmd = _setpoints(mode, temp, low, high)
+            await steerer.async_set_targets(cmd.heat, cmd.cool, command=mode_cmd, mode=mode)
+            return
 
         def build(state: DeviceState) -> Command:
             target = (parked or state.mode) if hvac_mode == HVACMode.OFF else FROM_HA[hvac_mode]

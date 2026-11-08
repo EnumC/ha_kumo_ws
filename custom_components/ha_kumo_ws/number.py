@@ -71,6 +71,12 @@ class KumoRoomTempOffset(KumoEntity, NumberEntity):
         super().__init__(coordinator, "local_temperature_calibration")
 
     @property
+    def available(self) -> bool:
+        """Unavailable while a remote sensor steers the setpoint."""
+        hub = self.coordinator.hub
+        return super().available and self.coordinator.serial not in hub.steerers
+
+    @property
     def native_value(self) -> float | None:
         return self.state_data.room_temp_offset
 

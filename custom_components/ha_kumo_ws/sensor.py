@@ -44,6 +44,7 @@ class KumoSensorDescription(SensorEntityDescription):
     dynamic: bool = False
     local_only: bool = False
     local_link: bool = False
+    steered: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -72,6 +73,11 @@ def _active_thermistor(c: KumoDeviceCoordinator) -> StateType:
 
 SUB_MODES = [name.lower() for name in SUB_MODE_NAMES.values()]
 STAGES = [name.lower() for name in STAGE_NAMES.values()]
+
+
+def _setpoint_shift(c: KumoDeviceCoordinator) -> StateType:
+    steerer = c.hub.steerers.get(c.serial)
+    return None if steerer is None else steerer.shift
 
 
 def _cn105(c: KumoDeviceCoordinator) -> Cn105Telemetry:
@@ -191,6 +197,26 @@ UNIT_SENSORS: tuple[KumoSensorDescription, ...] = (
         local_only=True,
         dynamic=True,
     ),
+    KumoSensorDescription(
+        key="unit_room_temperature",
+        translation_key="unit_room_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda c: c.data.room_temp,
+        steered=True,
+    ),
+    KumoSensorDescription(
+        key="setpoint_shift",
+        translation_key="setpoint_shift",
+        device_class=SensorDeviceClass.TEMPERATURE_DELTA,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_setpoint_shift,
+        steered=True,
+    ),
 )
 
 WIRELESS_SENSORS: tuple[WirelessSensorDescription, ...] = (
@@ -265,10 +291,16 @@ async def async_setup_entry(
                     description.key
                 ):
                     continue
+                if description.steered and coordinator.serial not in hub.steerers:
+                    continue
                 if description.dynamic and description.value_fn(coordinator) is None:
                     continue
                 added.add(description.key)
-                cls = KumoLocalSensor if description.local_link else KumoSensor
+                cls: type[KumoSensor] = KumoSensor
+                if description.local_link:
+                    cls = KumoLocalSensor
+                elif description.steered:
+                    cls = KumoSteerSensor
                 new.append(cls(coordinator, description))
             for sensor in coordinator.data.sensors:
                 if not sensor.uuid or f"sensor_{sensor.uuid}" in added:
@@ -314,6 +346,14 @@ class KumoSensor(KumoEntity, SensorEntity):
 
 class KumoLocalSensor(KumoLocalEntity, KumoSensor):
     """Unit sensor that is only available on a local link."""
+
+
+class KumoSteerSensor(KumoSensor):
+    """Unit sensor that is only available while a remote sensor steers the setpoint."""
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.coordinator.serial in self.coordinator.hub.steerers
 
 
 class KumoWirelessSensor(KumoEntity, SensorEntity):

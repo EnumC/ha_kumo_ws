@@ -58,6 +58,7 @@ async def async_get_config_entry_diagnostics(
         link = coordinator.link
         creds = hub.credentials.get(serial) if hub.credentials is not None else None
         controller = hub.controllers.get(serial)
+        steerer = hub.steerers.get(serial)
         devices.append(
             {
                 "device": f"device_{index}",
@@ -75,6 +76,7 @@ async def async_get_config_entry_diagnostics(
                 "smart_fan_active": controller is not None and controller.smart_fan_active,
                 "auto_off": controller is not None and controller.options.auto_off,
                 "parked_mode": _plain(controller.parked_mode) if controller is not None else None,
+                "steering": steerer.diagnostics() if steerer is not None else None,
             }
         )
     data = {
