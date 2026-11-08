@@ -59,6 +59,7 @@ class AsyncCn105Bus:
         self._lock = asyncio.Lock()
         self._answered: set[int] = set()
         self._unsupported: set[int] = set()
+        self._sent = False
 
     @property
     def unsupported_codes(self) -> frozenset[int]:
@@ -89,7 +90,8 @@ class AsyncCn105Bus:
     ) -> bytes | None:
         """Send one frame and poll until a matching reply arrives or timeout elapses."""
         async with self._lock, self._client.cycle():
-            if not await self._send(frame, id_byte):
+            self._sent = await self._send(frame, id_byte)
+            if not self._sent:
                 return None
             deadline = self._clock.monotonic() + timeout
             while (remaining := deadline - self._clock.monotonic()) > 0:
@@ -126,7 +128,7 @@ class AsyncCn105Bus:
         if reply is not None:
             self._answered.add(int(code))
             return reply
-        if code not in DEFAULT_INFO_CODES and code not in self._answered:
+        if self._sent and code not in DEFAULT_INFO_CODES and code not in self._answered:
             self._unsupported.add(int(code))
             _LOGGER.warning(
                 "%s: info code 0x%02x did not answer and will not be sent again",
