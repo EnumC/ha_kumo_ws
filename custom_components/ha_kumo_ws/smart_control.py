@@ -97,10 +97,12 @@ class ControlOptions:
         return self.smart_fan or self.auto_off
 
 
-def demand(mode: HvacMode, state: DeviceState, temp: float) -> float | None:
+def demand(
+    mode: HvacMode, heat_target: float | None, cool_target: float | None, temp: float
+) -> float | None:
     """Degrees C of conditioning still needed in mode; positive means more."""
-    cool = None if state.sp_cool is None else temp - state.sp_cool
-    heat = None if state.sp_heat is None else state.sp_heat - temp
+    cool = None if cool_target is None else temp - cool_target
+    heat = None if heat_target is None else heat_target - temp
     if mode is HvacMode.COOL:
         return cool
     if mode is HvacMode.HEAT:
@@ -417,8 +419,9 @@ class SmartController:
 
     def _overshot(self, mode: HvacMode, state: DeviceState, temp: float) -> bool:
         off = self.options.off_margin
-        heat = state.sp_heat is not None and temp >= state.sp_heat + off
-        cool = state.sp_cool is not None and temp <= state.sp_cool - off
+        sp_heat, sp_cool = self._targets(state)
+        heat = sp_heat is not None and temp >= sp_heat + off
+        cool = sp_cool is not None and temp <= sp_cool - off
         if mode is HvacMode.HEAT:
             return heat
         if mode is HvacMode.COOL:
@@ -440,7 +443,7 @@ class SmartController:
     def _evaluate_fan(self, mode: HvacMode, state: DeviceState, temp: float, now: float) -> None:
         options = self.options
         ladder = [s for s in self._coordinator.capabilities.fan_speeds if s is not FanSpeed.AUTO]
-        need = demand(mode, state, temp)
+        need = demand(mode, *self._targets(state), temp)
         if not ladder or need is None:
             return
         if self._fan_at is not None and now - self._fan_at < options.fan_hold:
@@ -460,6 +463,9 @@ class SmartController:
     def _fan_index(self, need: float, count: int) -> int:
         share = min(max(need / self.options.full_speed_at, 0.0), 1.0)
         return math.floor(share * (count - 1) + 0.5)
+
+    def _targets(self, state: DeviceState) -> tuple[float | None, float | None]:
+        return self._coordinator.hub.targets(self._serial, state)
 
     def _temperature(self, state: DeviceState, now: float) -> float | None:
         if self.entity_id:
@@ -481,11 +487,12 @@ class SmartController:
             return now - self._temp_lost_at >= STALE_S
         self._temp_lost_at = None
         margin = self.options.restart_margin
+        sp_heat, sp_cool = self._targets(state)
         sides: list[bool | None] = []
         if mode in (HvacMode.HEAT, HvacMode.AUTO):
-            sides.append(None if state.sp_heat is None else temp <= state.sp_heat - margin)
+            sides.append(None if sp_heat is None else temp <= sp_heat - margin)
         if mode in (HvacMode.COOL, HvacMode.AUTO):
-            sides.append(None if state.sp_cool is None else temp >= state.sp_cool + margin)
+            sides.append(None if sp_cool is None else temp >= sp_cool + margin)
         return any(side is not False for side in sides)
 
     async def _async_set_fan(self, speed: FanSpeed) -> None:
