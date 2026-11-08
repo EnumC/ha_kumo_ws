@@ -434,6 +434,11 @@ class KumoDeviceCoordinator(DataUpdateCoordinator[DeviceState]):
                     self.hass, self.async_request_refresh(), f"{DOMAIN} {self.serial} rollback"
                 )
             raise _command_error(err) from err
+        except BaseException:
+            self._rollback(token, before)
+            self.holds.extend(self.serial, token, HOLD_TTL_LOCAL, self._clock.monotonic())
+            self._schedule_hold_expiry()
+            raise
         self.holds.extend(self.serial, token, self._ttl(kind), self._clock.monotonic())
         if isinstance(cmd, RebootAdapter):
             self._scheduler.request_profile()
