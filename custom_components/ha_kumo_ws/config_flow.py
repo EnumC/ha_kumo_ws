@@ -67,6 +67,8 @@ from .const import (
     CONF_POLL_INTERVAL,
     CONF_REFRESH_ON_CONNECT,
     CONF_REMOTE_TEMP,
+    CONF_RS_SECTION,
+    CONF_RS_TRIM,
     CONF_RT_ENTITY,
     CONF_RT_INTERVAL,
     CONF_RT_LOST_AFTER,
@@ -90,6 +92,10 @@ from .const import (
     MAX_POLL_INTERVAL,
     MIN_CN105_INTERVAL,
     MIN_POLL_INTERVAL,
+    RS_KEYS,
+    RS_LIMITS,
+    RS_MINUTES,
+    RS_TEMPERATURES,
     RT_STALE_MAX,
     RT_STALE_MIN,
     TARGET_TEMP_STEPS,
@@ -268,6 +274,8 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
         self._cidrs: list[str] = []
         self._cn105: dict[str, Any] = {}
         self._control: dict[str, bool] = {}
+        self._remote_temp: dict[str, dict[str, Any]] = {}
+        self._unit_labels: dict[str, str] = {}
         self._after_control: Callable[[], Awaitable[ConfigFlowResult]] | None = None
         self._addresses: dict[str, str] = {}
         self._missing: dict[str, str] = {}
@@ -334,6 +342,9 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_FP_DEFAULTS: self._control,
             CONF_CONNECTION_MODE: mode,
             CONF_CIDRS: self._cidrs,
+            CONF_REMOTE_TEMP: {
+                serial: {CONF_RT_ENTITY: entity} for serial, entity in self._remote_temp.items()
+            },
         }
         return self.async_create_entry(title=title, data=data, options=options)
 
@@ -485,6 +496,48 @@ class KumoConfigFlow(ConfigFlow, domain=DOMAIN):
         self, then: Callable[[], Awaitable[ConfigFlowResult]]
     ) -> ConfigFlowResult:
         self._after_control = then
+        return await self.async_step_remote_sensors()
+
+    async def _async_remote_sensor_units(self) -> dict[str, str]:
+        """Serial to label for the units that can take a room sensor."""
+        if self._method is not SetupMethod.CLOUD_WS:
+            return {s: _label(s, unit.label) for s, unit in sorted(self._units.items())}
+        clock = SystemClock()
+        rest, _tokens = _cloud_client(self, self._login, clock, CloudCallLedger(clock))
+        try:
+            infos = await CloudInventory(rest, self._site_ids).async_list_units()
+        except Exception as err:
+            _LOGGER.debug("Cloud unit listing failed: %s", type(err).__name__)
+            return {}
+        finally:
+            await rest.async_close()
+        return {i.serial: _label(i.serial, i.label) for i in sorted(infos, key=lambda i: i.serial)}
+
+    async def async_step_remote_sensors(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Optional Home Assistant room temperature sensor for each unit."""
+        if not self._unit_labels:
+            self._unit_labels = await self._async_remote_sensor_units()
+            if not self._unit_labels:
+                _LOGGER.debug("No units to map room sensors to; skipping step")
+                return await self.async_step_smart_control()
+        if user_input is None:
+            selector = EntitySelector(
+                EntitySelectorConfig(domain="sensor", device_class=SensorDeviceClass.TEMPERATURE)
+            )
+            return self.async_show_form(
+                step_id="remote_sensors",
+                data_schema=vol.Schema(
+                    {vol.Optional(label): selector for label in self._unit_labels.values()}
+                ),
+                last_step=False,
+            )
+        self._remote_temp = {
+            serial: entity
+            for serial, label in self._unit_labels.items()
+            if (entity := user_input.get(label))
+        }
         return await self.async_step_smart_control()
 
     async def async_step_smart_control(
@@ -800,6 +853,8 @@ class KumoOptionsFlow(OptionsFlowWithReload):
         menu = ["connection", "climate", "fan_park"]
         if self._local_capable:
             menu += ["network", "cn105", "remote_temp", "credentials"]
+        else:
+            menu.append("remote_temp")
         return self.async_show_menu(step_id="init", menu_options=menu)
 
     async def async_step_connection(
@@ -987,7 +1042,7 @@ class KumoOptionsFlow(OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Pick a unit to map a Home Assistant temperature sensor to."""
-        labels = await self._async_unit_labels()
+        labels = await self._async_device_labels()
         if not labels:
             return self.async_abort(reason="no_units")
         if user_input is not None:
@@ -1012,45 +1067,55 @@ class KumoOptionsFlow(OptionsFlowWithReload):
         """Sensor, interval and source handling for one unit; no sensor removes the mapping."""
         current = self._current()
         mapping = {k: dict(v) for k, v in current[CONF_REMOTE_TEMP].items()}
+        unit = self.hass.config.units.temperature_unit
         if user_input is not None:
             if entity_id := user_input.get(CONF_RT_ENTITY):
-                mapping[self._serial] = {
+                entry = {
                     CONF_RT_ENTITY: entity_id,
-                    CONF_RT_INTERVAL: int(user_input[CONF_RT_INTERVAL]),
-                    CONF_RT_MANAGE_SOURCE: bool(user_input[CONF_RT_MANAGE_SOURCE]),
                     CONF_RT_LOST_AFTER: round(float(user_input[CONF_RT_LOST_AFTER]) * 60),
                 }
+                if self._local_capable:
+                    entry[CONF_RT_INTERVAL] = int(user_input[CONF_RT_INTERVAL])
+                    entry[CONF_RT_MANAGE_SOURCE] = bool(user_input[CONF_RT_MANAGE_SOURCE])
                 if not user_input[CONF_RT_STALE_AUTO]:
-                    mapping[self._serial][CONF_RT_STALE_AFTER] = round(
-                        float(user_input[CONF_RT_STALE_AFTER]) * 60
-                    )
+                    entry[CONF_RT_STALE_AFTER] = round(float(user_input[CONF_RT_STALE_AFTER]) * 60)
+                if self._has_cloud:
+                    entry |= {
+                        key: _control_value(key, value, unit)
+                        for key, value in user_input[CONF_RS_SECTION].items()
+                    }
+                mapping[self._serial] = entry
             else:
                 mapping.pop(self._serial, None)
             return self.async_create_entry(data={**current, CONF_REMOTE_TEMP: mapping})
         existing = mapping.get(self._serial, {})
-        labels = await self._async_unit_labels()
+        labels = await self._async_device_labels()
         gap = None
         if entity_id := existing.get(CONF_RT_ENTITY):
             gap = await async_longest_report_gap(self.hass, entity_id)
         auto = auto_stale_after(gap)
-        schema = vol.Schema(
-            {
-                vol.Optional(CONF_RT_ENTITY): EntitySelector(
-                    EntitySelectorConfig(
-                        domain="sensor", device_class=SensorDeviceClass.TEMPERATURE
-                    )
-                ),
-                vol.Required(CONF_RT_INTERVAL): _seconds(5, 300),
-                vol.Required(CONF_RT_MANAGE_SOURCE): BooleanSelector(),
-                vol.Required(CONF_RT_STALE_AUTO): BooleanSelector(),
-                vol.Required(CONF_RT_STALE_AFTER): _minutes(RT_STALE_MIN // 60, RT_STALE_MAX // 60),
-                vol.Required(CONF_RT_LOST_AFTER): _minutes(1, 120),
-            }
-        )
-        suggested = {
+        fields: dict[vol.Marker, Any] = {
+            vol.Optional(CONF_RT_ENTITY): EntitySelector(
+                EntitySelectorConfig(domain="sensor", device_class=SensorDeviceClass.TEMPERATURE)
+            )
+        }
+        if self._local_capable:
+            fields[vol.Required(CONF_RT_INTERVAL)] = _seconds(5, 300)
+            fields[vol.Required(CONF_RT_MANAGE_SOURCE)] = BooleanSelector()
+        fields[vol.Required(CONF_RT_STALE_AUTO)] = BooleanSelector()
+        fields[vol.Required(CONF_RT_STALE_AFTER)] = _minutes(RT_STALE_MIN // 60, RT_STALE_MAX // 60)
+        fields[vol.Required(CONF_RT_LOST_AFTER)] = _minutes(1, 120)
+        if self._has_cloud:
+            fields[vol.Required(CONF_RS_SECTION)] = section(
+                vol.Schema({vol.Required(key): _control_selector(key, unit) for key in RS_KEYS}),
+                {"collapsed": True},
+            )
+        schema = vol.Schema(fields)
+        suggested: dict[str, Any] = {
             CONF_RT_ENTITY: existing.get(CONF_RT_ENTITY),
             CONF_RT_INTERVAL: existing.get(CONF_RT_INTERVAL, DEFAULT_RT_INTERVAL),
             CONF_RT_MANAGE_SOURCE: existing.get(CONF_RT_MANAGE_SOURCE, True),
+            CONF_RS_SECTION: {key: _control_display(key, existing, unit) for key in RS_KEYS},
             CONF_RT_STALE_AUTO: CONF_RT_STALE_AFTER not in existing,
             CONF_RT_STALE_AFTER: round(existing.get(CONF_RT_STALE_AFTER, auto) / 60),
             CONF_RT_LOST_AFTER: round(existing.get(CONF_RT_LOST_AFTER, DEFAULT_RT_LOST_AFTER) / 60),
@@ -1281,11 +1346,16 @@ def _delta(celsius: float, unit: str) -> float:
     return round(TemperatureDeltaConverter.convert(celsius, UnitOfTemperature.CELSIUS, unit), 2)
 
 
+_LIMITS = {**FP_LIMITS, **RS_LIMITS}
+_TEMPERATURES = FP_TEMPERATURES | RS_TEMPERATURES
+_MINUTES = FP_MINUTES | RS_MINUTES
+
+
 def _control_selector(key: str, unit: str) -> BooleanSelector | NumberSelector:
-    if key not in FP_LIMITS:
+    if key not in _LIMITS:
         return BooleanSelector()
-    _, low, high = FP_LIMITS[key]
-    if key in FP_TEMPERATURES:
+    _, low, high = _LIMITS[key]
+    if key in _TEMPERATURES:
         return NumberSelector(
             NumberSelectorConfig(
                 min=_delta(low, unit),
@@ -1295,7 +1365,7 @@ def _control_selector(key: str, unit: str) -> BooleanSelector | NumberSelector:
                 mode=NumberSelectorMode.BOX,
             )
         )
-    if key in FP_MINUTES:
+    if key in _MINUTES:
         return NumberSelector(
             NumberSelectorConfig(
                 min=low / 60,
@@ -1310,23 +1380,23 @@ def _control_selector(key: str, unit: str) -> BooleanSelector | NumberSelector:
 
 def _control_display(key: str, stored: Mapping[str, Any], unit: str) -> Any:
     """Stored value (or default) in the form's unit."""
-    if key not in FP_LIMITS:
-        return bool(stored.get(key))
-    value = float(stored.get(key, FP_LIMITS[key][0]))
-    if key in FP_TEMPERATURES:
+    if key not in _LIMITS:
+        return bool(stored.get(key, key == CONF_RS_TRIM))
+    value = float(stored.get(key, _LIMITS[key][0]))
+    if key in _TEMPERATURES:
         return _delta(value, unit)
-    return round(value / 60) if key in FP_MINUTES else round(value)
+    return round(value / 60) if key in _MINUTES else round(value)
 
 
 def _control_value(key: str, value: Any, unit: str) -> Any:
     """Form value to the stored unit: Celsius or seconds."""
-    if key not in FP_LIMITS:
+    if key not in _LIMITS:
         return bool(value)
-    if key in FP_TEMPERATURES:
+    if key in _TEMPERATURES:
         return round(
             TemperatureDeltaConverter.convert(float(value), unit, UnitOfTemperature.CELSIUS), 2
         )
-    return round(float(value) * 60) if key in FP_MINUTES else round(float(value))
+    return round(float(value) * 60) if key in _MINUTES else round(float(value))
 
 
 def _minutes(minimum: int, maximum: int) -> NumberSelector:

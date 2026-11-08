@@ -92,6 +92,10 @@
           "password": "Password"
         }
       },
+      "remote_sensors": {
+        "title": "Room temperature sensors",
+        "description": "Choose a Home Assistant temperature sensor for each unit. This is recommended for the most accurate temperature, especially for ductless units, which otherwise measure the air returning into the unit. A room sensor also significantly improves automatic off, because the unit powers off and back on based on the temperature where you are. You can leave any unit empty and add or change its sensor later in the integration options under Remote temperature."
+      },
       "smart_control": {
         "title": "Smart control",
         "description": "Applies to all units with default settings. Each unit can be tuned or opted out later in the integration options under Smart control.",
@@ -216,7 +220,7 @@
       },
       "remote_temp_unit": {
         "title": "Remote temperature sensor",
-        "description": "Unit {unit}. Clear the sensor to remove the mapping.\n\nLongest reporting gap of the mapped sensor over the last day: {gap}. Automatic stale after: {auto}.",
+        "description": "Unit {unit}. Clear the sensor to remove the mapping.\n\nA unit with a local connection receives the sensor temperature directly. A unit reached only through the cloud cannot, so the integration keeps the target temperature in Home Assistant and moves the unit setpoint by the learned difference between the unit's own reading and the sensor.\n\nLongest reporting gap of the mapped sensor over the last day: {gap}. Automatic stale after: {auto}.",
         "data": {
           "entity_id": "Temperature sensor",
           "interval": "Send interval",
@@ -231,6 +235,30 @@
           "stale_auto": "Derive the stale threshold from the sensor's reporting history (1.5 times its longest gap, 5 to 30 minutes). Turn off to use the value below.",
           "stale_after": "Custom stale threshold. The unit is switched to the remote temperature only if the sensor has reported within this time.",
           "lost_after": "How long the sensor may be unavailable before the unit goes back to its previous temperature source."
+        },
+        "sections": {
+          "steering": {
+            "name": "Cloud steering",
+            "description": "Applies to units reached only through the cloud. The integration keeps your target in Home Assistant and moves the unit setpoint by the learned difference between the unit's own reading and the sensor, so the room reaches your target.",
+            "data": {
+              "trim": "Slow correction",
+              "bias_tau": "Learning time",
+              "trim_time": "Correction time",
+              "max_trim": "Maximum correction",
+              "min_write": "Minimum time between setpoint changes",
+              "warmup": "Warm-up time",
+              "steady_band": "Steady band"
+            },
+            "data_description": {
+              "trim": "Slowly adds a small extra shift while the room stays away from the target, to remove any remaining miss.",
+              "bias_tau": "How quickly the learned difference between the unit's reading and the sensor follows changes. It learns four times slower while the room is outside the steady band.",
+              "trim_time": "How long a constant miss takes to be fully corrected by the slow correction.",
+              "max_trim": "The largest extra shift the slow correction may add.",
+              "min_write": "The unit setpoint is moved at most once in this time, except for your own changes.",
+              "warmup": "How long after power on or a mode change the unit's reading is ignored for learning.",
+              "steady_band": "The room counts as near the target within this distance, and learning runs at the normal speed."
+            }
+          }
         }
       },
       "fan_park": {
