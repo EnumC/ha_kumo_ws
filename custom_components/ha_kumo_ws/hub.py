@@ -331,7 +331,9 @@ class KumoHub:
 
     def _wants_steering(self, serial: str) -> bool:
         """The unit has no local route, so a remote sensor steers the setpoint over the cloud."""
-        return self.policy.has_cloud and (self.local is None or not self.local.has_unit(serial))
+        if not self.policy.has_cloud:
+            return False
+        return self.local is None or not self.policy.has_local or not self.local.has_unit(serial)
 
     def _start_remote_temp(self, coordinator: KumoDeviceCoordinator) -> None:
         serial = coordinator.serial
@@ -742,7 +744,7 @@ class KumoHub:
             if known is None or not self.local.has_unit(serial):
                 self.local.add_unit(serial, unit)
                 creds_changed, address_changed = True, False
-                if serial in self.steerers:
+                if serial in self.steerers and not self._wants_steering(serial):
                     self._spawn(self._async_switch_to_feeder(serial), f"{serial} feeder switch")
             else:
                 creds_changed, address_changed = known[0] != pair, known[1] != address
