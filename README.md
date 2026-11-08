@@ -29,6 +29,7 @@ Alternatively, add this repo manually in HACS:
 - In Settings -> Devices -> "Add Integration", Select "Mitsubishi Comfort (WS)"
 - Enter your username and password
 - Select the site you want to monitor
+- Optionally choose a Home Assistant temperature sensor for each unit
 - Click "Submit"
 
 ## Features
@@ -73,9 +74,18 @@ Alternatively, add this repo manually in HACS:
 
 
 ## Remote temperature sensor
-A Home Assistant temperature sensor can be mapped to a unit under "Remote temperature" in the integration options (local credentials required).
+A Home Assistant temperature sensor can be mapped to a unit under "Remote temperature" in the integration options. Units with local credentials receive the sensor reading directly. Units reached only through the cloud are steered, as described below.
 - With "Manage the temperature source" on, the unit is switched to the sensor and back to its previous source when the sensor is unavailable for the unavailable timeout (default 30 min) or the mapping is removed. If the unit drops the setting on its own (adapter reset), it is switched back.
 - The unit is only switched to the sensor while the sensor is reporting. "Stale after" is derived from the sensor's recorded history (1.5 times its longest reporting gap over the last day, 5 to 30 min); but the value can be overwritten with a custom stale timeout.
+
+### Cloud-only units
+The Kumo Cloud cannot accept a remote temperature, so a unit reached only through the cloud is steered instead. The integration keeps your target temperature in Home Assistant and adjusts the unit setpoint so the room sensor reaches it.
+- The integration learns the difference between the unit's own reading and the room sensor while the unit is running, and adds that difference to the setpoint it sends.
+- A slow correction removes any remaining miss. The climate entity shows the room sensor temperature and your target, not the shifted setpoint.
+- Smart control uses the room sensor and your target as well.
+- If the sensor is unavailable for the unavailable timeout, or the mapping is removed, the unit setpoint is set back to your target.
+- The tuning values are in the collapsed "Cloud steering" section of the unit's remote temperature options.
+- The setup flow asks for a sensor for each unit. A room sensor is recommended for ductless units, which otherwise measure the air returning into the unit, and it improves automatic off.
 
 ## HVAC action
 | Unit state | hvac_action |
